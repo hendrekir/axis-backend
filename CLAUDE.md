@@ -186,21 +186,27 @@ When making major changes, increment version in filename.
 Current version: v1.0
 
 ## WHAT'S BUILT (update as you go)
-- [ ] FastAPI skeleton + CORS + auth middleware
-- [ ] /thread endpoint
-- [ ] /signal endpoint
-- [ ] /tasks CRUD
-- [ ] /brain-dump endpoint
-- [ ] /brief endpoint
-- [ ] /skills/{id}/chat endpoints
-- [ ] Morning digest cron (6:50AM local)
-- [ ] APNs push infrastructure
-- [ ] RevenueCat webhook handler
+- [x] FastAPI skeleton + CORS + auth middleware
+- [x] /thread endpoint (POST /thread, GET /thread/history)
+- [x] /signal endpoint (GET /signal — top 3 tasks)
+- [x] /tasks CRUD (POST /tasks, PATCH /tasks/{id})
+- [x] /brain-dump endpoint (POST /brain-dump — Claude API, parser, tested working)
+- [x] /brief endpoint (GET /brief — morning digest generation)
+- [x] /skills/{id}/chat endpoints (6 skills: email, calendar, finance, site, study, team)
+- [x] Neon Postgres connected (tables auto-created on startup)
+- [x] Clerk JWT auth middleware (JWKS verification)
+- [x] RevenueCat webhook handler (POST /webhooks/revenuecat)
+- [x] APNs push infrastructure (services/push_service.py + POST /push/register)
+- [x] All SQLAlchemy models (User, ThreadMessage, Task, TeamSignal, AgentActivity)
+- [x] All skill prompts written (email, calendar, finance, site, study, team)
+- [ ] Morning digest cron (6:50AM local) — generation works, cron scheduler not wired
 - [ ] Resend welcome email sequence
+- [ ] Restore auth on /brain-dump before deploy (temporarily public for testing)
 
 ## CURRENT PHASE
-Phase 1 — Web prototype backend.
-Next: connect iOS app.
+Phase 1 — Backend skeleton complete and tested.
+Next: restore auth on /brain-dump, wire morning digest cron, connect iOS app.
 
 ## LAST UPDATED
-March 2026 — initial setup. Update after every session.
+2026-03-28 — Full backend skeleton built. All routes, services, prompts, models created.
+Neon Postgres connected. Brain dump endpoint tested end-to-end with Claude API.
