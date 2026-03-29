@@ -1,6 +1,6 @@
 import logging
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -26,7 +26,7 @@ async def brain_dump_usage(
     db: AsyncSession = Depends(get_db),
 ):
     """Return brain dump usage count (rolling 24h window) and limit."""
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    cutoff = datetime.utcnow() - timedelta(hours=24)
     result = await db.execute(
         select(func.count())
         .select_from(Interaction)
