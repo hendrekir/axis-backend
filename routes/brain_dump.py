@@ -1,5 +1,6 @@
+import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -12,6 +13,8 @@ from prompts.brain_dump import BRAIN_DUMP_PROMPT
 from routes.auth import get_authenticated_user
 from services.claude_service import generate
 
+logger = logging.getLogger("axis.brain_dump")
+
 router = APIRouter()
 
 FREE_BRAIN_DUMP_LIMIT = 3
@@ -22,19 +25,20 @@ async def brain_dump_usage(
     user: User = Depends(get_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return today's brain dump usage count and limit."""
-    today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    """Return brain dump usage count (rolling 24h window) and limit."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     result = await db.execute(
         select(func.count())
         .select_from(Interaction)
         .where(
             Interaction.user_id == user.id,
             Interaction.content_type == "brain_dump",
-            Interaction.created_at >= today_midnight,
+            Interaction.created_at >= cutoff,
         )
     )
     count = result.scalar_one()
     is_pro = user.plan == "pro"
+    logger.info("Brain dump usage for user %s: count=%d, is_pro=%s", user.id, count, is_pro)
     return {"count": count, "limit": FREE_BRAIN_DUMP_LIMIT, "is_pro": is_pro}
 
 
