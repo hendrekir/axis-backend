@@ -84,5 +84,6 @@ async def gmail_auth_callback(
 
     await db.commit()
 
-    # Redirect back to the app with success indicator
-    return RedirectResponse(os.environ.get("APP_URL", "/") + "?gmail=connected")
+    # Redirect back to the frontend settings page
+    frontend = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+    return RedirectResponse(frontend + "/settings?gmail=connected")
