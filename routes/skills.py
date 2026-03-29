@@ -1,51 +1,182 @@
+import logging
+from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import User
+from models import User, Skill, SkillExecution
 from routes.auth import get_authenticated_user
-from services.claude_service import generate
-from prompts.skills.email_skill import EMAIL_SKILL_PROMPT
-from prompts.skills.calendar_skill import CALENDAR_SKILL_PROMPT
-from prompts.skills.finance_skill import FINANCE_SKILL_PROMPT
-from prompts.skills.site_skill import SITE_SKILL_PROMPT
-from prompts.skills.study_skill import STUDY_SKILL_PROMPT
-from prompts.skills.team_skill import TEAM_SKILL_PROMPT
+from services.skill_engine import execute_skill, seed_builtin_skills
+
+logger = logging.getLogger("axis.skills")
 
 router = APIRouter()
 
-SKILL_PROMPTS = {
-    "email": EMAIL_SKILL_PROMPT,
-    "calendar": CALENDAR_SKILL_PROMPT,
-    "finance": FINANCE_SKILL_PROMPT,
-    "site": SITE_SKILL_PROMPT,
-    "study": STUDY_SKILL_PROMPT,
-    "team": TEAM_SKILL_PROMPT,
-}
 
-# Default context values for skill prompts that need extra params
-SKILL_DEFAULTS = {
-    "site": {"site_context": "No active site"},
-    "calendar": {"timezone": "Australia/Brisbane"},
-    "team": {"team_size": "0"},
-}
+# --- Pydantic models ---
+
+class SkillCreate(BaseModel):
+    name: str
+    description: str | None = None
+    data_sources: list[str] = []
+    reasoning_model: str = "claude"
+    trigger_type: str = "manual"
+    trigger_config: dict = {}
+    output_routing: str = "thread"
+    system_prompt: str | None = None
+
+
+class SkillUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    is_active: bool | None = None
+    data_sources: list[str] | None = None
+    reasoning_model: str | None = None
+    trigger_type: str | None = None
+    trigger_config: dict | None = None
+    output_routing: str | None = None
+    system_prompt: str | None = None
 
 
 class SkillChatIn(BaseModel):
     message: str
 
 
-@router.get("/skills/{skill_id}/chat")
-async def skill_chat_get(
-    skill_id: str,
-    message: str,
+# --- CRUD ---
+
+@router.get("/skills")
+async def list_skills(
     user: User = Depends(get_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Talk to a specific skill (GET with query param)."""
-    return await _handle_skill_chat(skill_id, message, user)
+    """List all skills for the current user. Seeds built-ins on first call."""
+    result = await db.execute(
+        select(Skill).where(Skill.user_id == user.id).order_by(Skill.created_at)
+    )
+    skills = result.scalars().all()
 
+    # Seed built-in skills on first access
+    if not skills:
+        skills = await seed_builtin_skills(user.id, db)
+
+    return {
+        "skills": [
+            {
+                "id": str(s.id),
+                "name": s.name,
+                "description": s.description,
+                "is_builtin": s.is_builtin,
+                "is_active": s.is_active,
+                "data_sources": s.data_sources,
+                "reasoning_model": s.reasoning_model,
+                "trigger_type": s.trigger_type,
+                "output_routing": s.output_routing,
+            }
+            for s in skills
+        ]
+    }
+
+
+@router.post("/skills")
+async def create_skill(
+    body: SkillCreate,
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a custom skill."""
+    skill = Skill(
+        user_id=user.id,
+        name=body.name,
+        description=body.description,
+        is_builtin=False,
+        data_sources=body.data_sources,
+        reasoning_model=body.reasoning_model,
+        trigger_type=body.trigger_type,
+        trigger_config=body.trigger_config,
+        output_routing=body.output_routing,
+        system_prompt=body.system_prompt,
+    )
+    db.add(skill)
+    await db.commit()
+    await db.refresh(skill)
+
+    return {"id": str(skill.id), "name": skill.name, "status": "created"}
+
+
+@router.patch("/skills/{skill_id}")
+async def update_skill(
+    skill_id: str,
+    body: SkillUpdate,
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a skill's configuration."""
+    result = await db.execute(
+        select(Skill).where(Skill.id == skill_id, Skill.user_id == user.id)
+    )
+    skill = result.scalar_one_or_none()
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    for field, value in body.model_dump(exclude_none=True).items():
+        setattr(skill, field, value)
+
+    await db.commit()
+    await db.refresh(skill)
+    return {"id": str(skill.id), "name": skill.name, "status": "updated"}
+
+
+@router.delete("/skills/{skill_id}")
+async def delete_skill(
+    skill_id: str,
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a custom skill. Built-in skills can only be deactivated."""
+    result = await db.execute(
+        select(Skill).where(Skill.id == skill_id, Skill.user_id == user.id)
+    )
+    skill = result.scalar_one_or_none()
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    if skill.is_builtin:
+        raise HTTPException(status_code=400, detail="Cannot delete built-in skill — deactivate it instead")
+
+    await db.delete(skill)
+    await db.commit()
+    return {"status": "deleted"}
+
+
+# --- Execution ---
+
+@router.post("/skills/{skill_id}/run")
+async def run_skill(
+    skill_id: str,
+    body: SkillChatIn,
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Manually trigger a skill with a message."""
+    result = await db.execute(
+        select(Skill).where(Skill.id == skill_id, Skill.user_id == user.id)
+    )
+    skill = result.scalar_one_or_none()
+    if not skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+
+    execution = await execute_skill(skill, user, body.message, db)
+    return {
+        "skill": skill.name,
+        "model": execution["model"],
+        "response": execution["text"],
+        "elapsed_ms": execution["elapsed_ms"],
+    }
+
+
+# --- Legacy chat endpoint (backwards compatible) ---
 
 @router.post("/skills/{skill_id}/chat")
 async def skill_chat_post(
@@ -54,30 +185,25 @@ async def skill_chat_post(
     user: User = Depends(get_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Talk to a specific skill (POST with body)."""
-    return await _handle_skill_chat(skill_id, body.message, user)
+    """Chat with a skill — routes through the skills engine."""
+    # Try DB skill first
+    result = await db.execute(
+        select(Skill).where(Skill.user_id == user.id, Skill.name == skill_id)
+    )
+    skill = result.scalar_one_or_none()
 
+    # Also try by ID
+    if not skill:
+        result = await db.execute(
+            select(Skill).where(Skill.id == skill_id, Skill.user_id == user.id)
+        )
+        skill = result.scalar_one_or_none()
 
-async def _handle_skill_chat(skill_id: str, message: str, user: User) -> dict:
-    prompt_template = SKILL_PROMPTS.get(skill_id)
-    if not prompt_template:
+    if not skill:
         raise HTTPException(
             status_code=404,
-            detail=f"Skill '{skill_id}' not found. Available: {list(SKILL_PROMPTS.keys())}",
+            detail=f"Skill '{skill_id}' not found",
         )
 
-    # Build format kwargs
-    fmt = {
-        "name": user.name or "there",
-        "mode": user.mode,
-    }
-    if skill_id in SKILL_DEFAULTS:
-        fmt.update(SKILL_DEFAULTS[skill_id])
-
-    system = prompt_template.format(**fmt)
-    response = await generate(system_prompt=system, user_message=message)
-
-    return {
-        "skill": skill_id,
-        "response": response,
-    }
+    execution = await execute_skill(skill, user, body.message, db)
+    return {"skill": skill.name, "response": execution["text"]}
