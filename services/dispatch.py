@@ -20,12 +20,14 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import User, Task, ThreadMessage, UserModel, Interaction, Skill
+from models import User, Task, ThreadMessage, UserModel, Interaction, Skill, AgentActivity
 from prompts.dispatch_v2 import DISPATCH_V2_SYSTEM
 from services.claude_service import generate
 from services.gmail_service import fetch_recent_emails
 from services.push_service import send_push
 from services.skill_engine import run_dispatch_skills
+from services.triage_service import triage_items
+from services.signal_filter import apply_filters
 
 logger = logging.getLogger("axis.dispatch")
 
@@ -168,20 +170,51 @@ async def _route_item(item: dict, user: User, db: AsyncSession):
     ))
 
 
+async def _generate_email_draft(item: dict, user: User, db: AsyncSession) -> str:
+    """Generate a voice-matched email draft for urgent reply items."""
+    from prompts.email_draft import EMAIL_DRAFT_SYSTEM
+
+    # Load voice patterns from user model
+    result = await db.execute(
+        select(UserModel).where(UserModel.user_id == user.id)
+    )
+    user_model = result.scalar_one_or_none()
+    voice_patterns = json.dumps(user_model.voice_patterns or {}) if user_model else "{}"
+
+    prompt = EMAIL_DRAFT_SYSTEM.format(
+        name=user.name or "there",
+        voice_patterns=voice_patterns,
+        sender=item.get("from", item.get("sender", "unknown")),
+        subject=item.get("subject", item.get("summary", "")),
+        email_body=item.get("snippet", item.get("preview", "")),
+        thread_context=item.get("reason", ""),
+    )
+
+    draft = await generate(
+        system_prompt="You are drafting an email reply. Return ONLY the email body text, nothing else.",
+        user_message=prompt,
+        max_tokens=512,
+    )
+    return draft.strip()
+
+
 async def dispatch_user(user: User, db: AsyncSession) -> dict:
     """Run the full dispatch cycle for one user."""
     stats = {
         "user_id": str(user.id),
         "emails_fetched": 0,
+        "items_triaged": 0,
+        "noise_filtered": 0,
         "pushed": 0,
         "threaded": 0,
         "silent": 0,
         "digest": 0,
+        "drafts_generated": 0,
         "skills_run": 0,
     }
 
     # 1. Fetch new data from connected sources
-    new_data_parts = []
+    raw_items = []  # Unified list for triage
 
     # Gmail
     if user.gmail_connected:
@@ -190,42 +223,82 @@ async def dispatch_user(user: User, db: AsyncSession) -> dict:
         )
         unread = [e for e in emails if e.get("is_unread")]
         stats["emails_fetched"] = len(unread)
-        if unread:
-            emails_text = "\n\n".join(
-                f"[gmail] ID: {e['id']} | From: {e['from']} | Subject: {e['subject']} | Preview: {e['snippet']}"
-                for e in unread
-            )
-            new_data_parts.append(emails_text)
+        for e in unread:
+            raw_items.append({
+                "id": e.get("id", ""),
+                "source": "gmail",
+                "summary": f"{e.get('from', 'Unknown')}: {e.get('subject', '')}",
+                "subject": e.get("subject", ""),
+                "from": e.get("from", ""),
+                "snippet": e.get("snippet", ""),
+                "is_unread": True,
+            })
 
     # Calendar
     if user.calendar_connected:
         try:
             from services.calendar_service import fetch_upcoming_events
             events = await fetch_upcoming_events(user, db, hours_ahead=4, max_results=5)
-            if events:
-                cal_text = "\n".join(
-                    f"[calendar] {e['summary']} at {e['start_dt']} — {len(e.get('attendees', []))} attendees"
-                    for e in events
-                )
-                new_data_parts.append(cal_text)
+            for e in events:
+                raw_items.append({
+                    "id": e.get("id", ""),
+                    "source": "calendar",
+                    "summary": f"{e['summary']} at {e['start_dt']}",
+                    "attendees": e.get("attendees", []),
+                    "location": e.get("location", ""),
+                })
         except Exception as e:
             logger.warning("Calendar fetch failed in dispatch for user %s: %s", user.id, e)
 
-    new_data = "\n\n".join(new_data_parts) if new_data_parts else "No new data inputs."
-
-    # Skip Claude call if no new data
-    if not new_data_parts:
+    # Skip if no new data
+    if not raw_items:
         logger.info("No new data for user %s — running dispatch skills only", user.id)
-        # Still run dispatch-triggered skills
         skill_results = await run_dispatch_skills(user, db)
         stats["skills_run"] = len(skill_results)
         user.last_dispatch_run = datetime.utcnow()
         await db.commit()
         return stats
 
-    # 2. Assemble context
+    # 2. TRIAGE — cheap Gemini pre-filter, discard noise before Claude
     ctx = await _build_context(user, db)
+    user_profile = {
+        "name": user.name or "User",
+        "mode": user.mode,
+        "tasks": ctx["tasks"],
+        "calendar": ctx.get("calendar_context", "None"),
+    }
+
+    triage_result = await triage_items(raw_items, user_profile)
+    stats["items_triaged"] = len(raw_items)
+    noise_count = len(triage_result["noise"])
+    stats["noise_filtered"] = noise_count
+
+    # Log noise count to agent_activity
+    if noise_count > 0:
+        db.add(AgentActivity(
+            user_id=user.id,
+            skill="dispatch",
+            action="triage_noise_filtered",
+            detail=f"{noise_count} items filtered as noise out of {len(raw_items)} total",
+        ))
+
+    # Only urgent + relevant proceed to Claude
+    items_for_claude = triage_result["urgent"] + triage_result["relevant"]
+
+    if not items_for_claude:
+        logger.info("All %d items triaged as noise for user %s", len(raw_items), user.id)
+        skill_results = await run_dispatch_skills(user, db)
+        stats["skills_run"] = len(skill_results)
+        user.last_dispatch_run = datetime.utcnow()
+        await db.commit()
+        return stats
+
+    # 3. Assemble context and call Claude with only the surviving items
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    new_data = "\n\n".join(
+        f"[{item['source']}] ID: {item['id']} | {item['summary']} | triage_score: {item.get('score', '?')}"
+        for item in items_for_claude
+    )
 
     prompt = DISPATCH_V2_SYSTEM.format(
         name=user.name or "there",
@@ -239,14 +312,13 @@ async def dispatch_user(user: User, db: AsyncSession) -> dict:
         new_data=new_data + ctx.get("calendar_context", ""),
     )
 
-    # 3. Call Claude for classification
     raw = await generate(
         system_prompt="You are Axis. Return only valid JSON.",
         user_message=prompt,
         max_tokens=2048,
     )
 
-    # 4. Parse response (strip markdown fences)
+    # 4. Parse response
     cleaned = re.sub(r'^```(?:json)?\s*\n?', '', raw.strip())
     cleaned = re.sub(r'\n?```\s*$', '', cleaned)
 
@@ -259,24 +331,56 @@ async def dispatch_user(user: User, db: AsyncSession) -> dict:
         await db.commit()
         return stats
 
-    # 5. Route each item
-    for item in items:
-        surface = item.get("surface", "silent")
-        stats[{"push": "pushed", "thread": "threaded", "digest": "digest"}.get(surface, "silent")] += 1
+    # 5. SIGNAL FILTER — 5-layer noise reduction on Claude's output
+    filtered = await apply_filters(items, user.id, user.mode, db)
+
+    # 6. Auto-generate email drafts for urgency 8+ reply items
+    for item in filtered["push"]:
+        urgency = item.get("urgency", item.get("score", 0))
+        action_type = item.get("action_type", "")
+        if urgency >= 8 and action_type == "send_reply" and item.get("source") == "gmail":
+            try:
+                # Find the original email data for this item
+                original = next(
+                    (r for r in raw_items if r.get("id") == item.get("item_id", item.get("id"))),
+                    item,
+                )
+                merged = {**original, **item}
+                draft = await _generate_email_draft(merged, user, db)
+                item["pre_prepared_action"] = draft
+                stats["drafts_generated"] += 1
+                logger.info("Auto-drafted reply for user %s: %s", user.name, item.get("summary", "")[:60])
+            except Exception as e:
+                logger.warning("Email draft generation failed for user %s: %s", user.id, e)
+
+    # 7. Route filtered items
+    for item in filtered["push"]:
+        item["surface"] = "push"
+        stats["pushed"] += 1
         await _route_item(item, user, db)
 
-    # 6. Run dispatch-triggered skills
+    for item in filtered["digest"]:
+        item["surface"] = "digest"
+        stats["digest"] += 1
+        await _route_item(item, user, db)
+
+    for item in filtered["silent"]:
+        item["surface"] = "silent"
+        stats["silent"] += 1
+        await _route_item(item, user, db)
+
+    # 8. Run dispatch-triggered skills
     skill_results = await run_dispatch_skills(user, db)
     stats["skills_run"] = len(skill_results)
 
-    # 7. Update last_dispatch_run
+    # 9. Update last_dispatch_run
     user.last_dispatch_run = datetime.utcnow()
     await db.commit()
 
     logger.info(
-        "Dispatch v2 complete for %s: %d emails, %d pushed, %d threaded, %d silent, %d skills",
-        user.name, stats["emails_fetched"], stats["pushed"], stats["threaded"],
-        stats["silent"], stats["skills_run"],
+        "Dispatch v3 complete for %s: %d fetched, %d triaged, %d noise, %d pushed, %d digest, %d silent, %d drafts, %d skills",
+        user.name, stats["emails_fetched"], stats["items_triaged"], stats["noise_filtered"],
+        stats["pushed"], stats["digest"], stats["silent"], stats["drafts_generated"], stats["skills_run"],
     )
     return stats
 

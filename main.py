@@ -26,6 +26,7 @@ from routes.billing import router as billing_router
 from services.dispatch import run_dispatch
 from services.morning_digest import run_morning_digest
 from services.apprentice import run_all_improvement, run_all_voice_rebuild
+from services.meeting_prep import run_meeting_prep
 
 load_dotenv()
 
@@ -75,6 +76,17 @@ async def _scheduled_voice_rebuild():
             logger.error("Voice rebuild failed: %s", e)
 
 
+async def _scheduled_meeting_prep():
+    """Every 5 minutes: check for meetings starting in 25-35 minutes, generate briefs."""
+    async with async_session() as db:
+        try:
+            results = await run_meeting_prep(db)
+            if results:
+                logger.info("Meeting prep: %d briefs generated", len(results))
+        except Exception as e:
+            logger.error("Meeting prep job failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create all tables on startup
@@ -97,10 +109,11 @@ async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(_scheduled_dispatch, "interval", minutes=15, id="dispatch")
     scheduler.add_job(_scheduled_digest, "interval", minutes=15, id="digest")
+    scheduler.add_job(_scheduled_meeting_prep, "interval", minutes=5, id="meeting_prep")
     scheduler.add_job(_scheduled_improvement, "cron", day_of_week="sun", hour=3, minute=0, id="improvement")
     scheduler.add_job(_scheduled_voice_rebuild, "cron", day_of_week="sun", hour=4, minute=0, id="voice_rebuild")
     scheduler.start()
-    logger.info("Scheduler started — dispatch/digest every 15min, improvement Sunday 3AM, voice Sunday 4AM")
+    logger.info("Scheduler started — dispatch/digest every 15min, meeting prep every 5min, improvement Sunday 3AM, voice Sunday 4AM")
 
     yield
 
