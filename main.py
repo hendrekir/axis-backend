@@ -19,6 +19,7 @@ from routes.payments import router as payments_router
 from routes.push import router as push_router
 from routes.gmail import router as gmail_router
 from routes.cron import router as cron_router
+from routes.me import router as me_router
 from services.dispatch import run_dispatch
 from services.morning_digest import run_morning_digest
 
@@ -121,6 +122,7 @@ app.include_router(payments_router, prefix="/webhooks", tags=["Payments"])
 app.include_router(push_router, tags=["Push"])
 app.include_router(gmail_router, tags=["Gmail"])
 app.include_router(cron_router, tags=["Cron"])
+app.include_router(me_router, tags=["User"])
 
 
 @app.get("/")
