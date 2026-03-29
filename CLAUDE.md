@@ -509,41 +509,50 @@ Tell Claude Code: "Read CLAUDE.md v2.0. Add the 4 new database tables first, the
 
 ## 16. CURRENT STATUS
 
-Date: 29 March 2026 - Session 5 complete
+Date: 29 March 2026 — Session 6 complete
 
 What is live:
 - Backend: https://web-production-32f5d.up.railway.app
 - Frontend: https://axis-web-chi.vercel.app
-- Gmail OAuth connected and reading real inbox every 15 min
-- Dispatch job + morning digest (6:50AM) running via APScheduler
-- 6 memory tables live in Neon
-- All 6 web screens live - Thread, Brain Dump, Signal, Skills, Brief, Settings
+- Gmail OAuth connected — read + send working end to end
+- Google Calendar OAuth — events + conflict detection
+- Dispatch v2 running — skills-aware, multi-model routing, calendar context
+- Morning digest cron (6:50AM) running via APScheduler
+- Apprentice crons wired: Sunday 3AM improvement cycle, Sunday 4AM voice rebuild
+- 10 database tables live in Neon (6 memory + 4 orchestration)
+- Skills framework live — 6 built-in skills seeded per user (email, calendar, finance, research, entertainment, site)
+- Multi-model router working — Claude (default), Perplexity (research), Grok (entertainment), Gemini Flash-Lite (triage)
+- Triage service — Gemini pre-filter classifies items before expensive models
+- Signal filter — 5-layer noise reduction (relevance, urgency, context, dedup, apprentice)
+- All 6 web screens live — Thread, Brain Dump, Signal, Skills, Brief, Settings
 - Thread responding as Axis in character
-- Stripe 9/mo paywall working end to end
+- Stripe $9/mo paywall working end to end
 - Mode switcher (Personal/Work/Builder/Student/Founder) live
 - Brain dump usage counter and paywall gate working
+- pool_pre_ping + pool_recycle for Neon connection stability
+- YouTube, Reddit, News data source services ready (need API keys to activate)
 
 What is NOT built yet:
-- Gmail SEND (draft + one-tap send)
-- Google Calendar OAuth
-- Skills framework (user-defined workflows)
-- Multi-model routing (Perplexity, Grok, Gemini)
-- Meeting prep cron
-- YouTube / Reddit / News / Grok integrations
+- Meeting prep cron (30min before events)
+- Voice-matched email draft prompt (needs voice model data)
+- [Send] / [Edit] / [Dismiss] action buttons in React thread
+- Spotify OAuth integration
 - Apprentice visibility dashboard
+- Connect Calendar button in Settings screen
 - iOS app
 
 Context files (load all at session start):
-- AXIS_CLAUDE.md - this file
-- AXIS_VISION_v1.md - full product vision
-- AXIS_BUILD_FRAMEWORK_v1.md - architecture
-- AXIS_INTELLIGENCE_v1.md - AI models + data sources + signal filtering
-- AXIS_SESSION_6_PLAN.md - exact build order
+- CLAUDE.md — this file
+- AXIS_VISION_v1.md — full product vision
+- AXIS_BUILD_FRAMEWORK_v1.md — architecture
+- AXIS_INTELLIGENCE_v1.md — AI models + data sources + signal filtering
+- AXIS_BUILD_CHECKLIST_v1.md — complete task checklist
+- AXIS_SESSION_6_PLAN.md — Session 6 build order (complete)
 
-Session 6 start:
+Session 7 start:
 cd ~/forge/axis-backend && claude
-Tell Claude Code: Read all 5 AXIS context files. Session 6: build orchestration backbone. Start with skills + api_connections tables, then model_router.py, then triage_service.py.
+Tell Claude Code: Read all context files. Session 7: entertainment layer — Spotify OAuth, meeting prep cron, action buttons in React, apprentice dashboard.
 
-*Load all 5 AXIS context files at the start of every session.*
+*Load all context files at the start of every session.*
 
-**END OF AXIS CLAUDE.md v2.1**
+**END OF AXIS CLAUDE.md v2.2**
