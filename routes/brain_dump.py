@@ -1,16 +1,41 @@
 import re
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import User, Task
+from models import User, Task, Interaction
 from prompts.brain_dump import BRAIN_DUMP_PROMPT
 from routes.auth import get_authenticated_user
 from services.claude_service import generate
 
 router = APIRouter()
+
+FREE_BRAIN_DUMP_LIMIT = 3
+
+
+@router.get("/brain-dump/usage")
+async def brain_dump_usage(
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return today's brain dump usage count and limit."""
+    today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    result = await db.execute(
+        select(func.count())
+        .select_from(Interaction)
+        .where(
+            Interaction.user_id == user.id,
+            Interaction.content_type == "brain_dump",
+            Interaction.created_at >= today_midnight,
+        )
+    )
+    count = result.scalar_one()
+    is_pro = user.plan == "pro"
+    return {"count": count, "limit": FREE_BRAIN_DUMP_LIMIT, "is_pro": is_pro}
 
 
 class BrainDumpIn(BaseModel):

@@ -13,3 +13,4 @@ google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
 google-api-python-client==2.159.0
 apscheduler==3.11.2
+stripe==8.4.0
