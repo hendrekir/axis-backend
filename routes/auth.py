@@ -44,8 +44,8 @@ async def get_authenticated_user(request: Request, db: AsyncSession = Depends(ge
     result = await db.execute(select(User).where(User.clerk_id == minimal_user.clerk_id))
     user = result.scalar_one_or_none()
     if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found. Complete onboarding first.",
-        )
+        user = User(clerk_id=minimal_user.clerk_id, mode="personal", plan="free")
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
     return user

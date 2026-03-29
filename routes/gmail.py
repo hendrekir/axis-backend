@@ -69,13 +69,13 @@ async def gmail_auth_callback(
 
     credentials = flow.credentials
 
-    # Look up user by clerk_id passed through OAuth state
+    # Look up user by clerk_id passed through OAuth state, auto-create if missing
     result = await db.execute(select(User).where(User.clerk_id == state))
     user = result.scalar_one_or_none()
     if user is None:
-        return RedirectResponse(
-            os.environ.get("APP_URL", "/") + "?gmail=error&reason=user_not_found"
-        )
+        user = User(clerk_id=state, mode="personal", plan="free")
+        db.add(user)
+        await db.flush()
 
     user.gmail_access_token = credentials.token
     user.gmail_refresh_token = credentials.refresh_token
