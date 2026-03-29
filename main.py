@@ -1,12 +1,14 @@
+import logging
 import os
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from database import engine, Base
+from database import engine, Base, async_session
 from routes.auth import get_current_user
 from routes.thread import router as thread_router
 from routes.signals import router as signals_router
@@ -17,11 +19,35 @@ from routes.payments import router as payments_router
 from routes.push import router as push_router
 from routes.gmail import router as gmail_router
 from routes.cron import router as cron_router
+from services.dispatch import run_dispatch
+from services.morning_digest import run_morning_digest
 
 load_dotenv()
 
+logger = logging.getLogger("axis.scheduler")
+
 # Public routes that skip auth
 PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/brain-dump", "/auth/gmail/callback", "/cron/dispatch", "/cron/digest"}
+
+
+async def _scheduled_dispatch():
+    """Wrapper to run dispatch inside its own DB session."""
+    async with async_session() as db:
+        try:
+            stats = await run_dispatch(db)
+            logger.info("Dispatch complete: %d users processed", len(stats))
+        except Exception as e:
+            logger.error("Dispatch job failed: %s", e)
+
+
+async def _scheduled_digest():
+    """Wrapper to run morning digest inside its own DB session."""
+    async with async_session() as db:
+        try:
+            results = await run_morning_digest(db)
+            logger.info("Digest complete: %d digests sent", len(results))
+        except Exception as e:
+            logger.error("Digest job failed: %s", e)
 
 
 @asynccontextmanager
@@ -29,8 +55,18 @@ async def lifespan(app: FastAPI):
     # Create all tables on startup
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Start scheduler
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(_scheduled_dispatch, "interval", minutes=15, id="dispatch")
+    scheduler.add_job(_scheduled_digest, "interval", minutes=15, id="digest")
+    scheduler.start()
+    logger.info("Scheduler started — dispatch and digest every 15 minutes")
+
     yield
-    # Dispose connection pool on shutdown
+
+    # Shutdown
+    scheduler.shutdown(wait=False)
     await engine.dispose()
 
 
