@@ -473,7 +473,31 @@ Tell Claude Code: "Read CLAUDE.md v2.0. Add the 4 new database tables first, the
 
 ---
 
-*Update Section 13 current deployment + add session notes after every session.*
+## 15. CURRENT STATUS
+
+Date: 29 March 2026 — Session 4 complete
+
+What's live:
+- Backend: https://web-production-32f5d.up.railway.app
+- Frontend: https://axis-web-chi.vercel.app
+- Gmail OAuth working end to end
+- Dispatch job reading real inbox every 15 minutes
+- Morning digest cron fires at 6:50AM Brisbane time
+- APScheduler running internally
+- All 6 screens live — Thread, Brain Dump, Signal, Skills, Brief, Settings
+- Thread responding as Axis in character
+- Memory tables live in Neon
+
+Next session starts with:
+- Fix /me endpoint NetworkError on Settings screen
+- Test Generate Brief with real Gmail data
+- Add mode switcher to nav
+- Stripe $9/mo paywall
+- Connect Gmail status showing correctly in Settings
+
+---
+
+*Update current status + add session notes after every session.*
 *This document is the single source of truth. Load it at the start of every session.*
 
 **END OF AXIS CLAUDE.md v2.0**
