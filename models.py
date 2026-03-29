@@ -23,6 +23,10 @@ class User(Base):
     gmail_refresh_token: Mapped[str | None] = mapped_column(Text)
     gmail_token_expiry: Mapped[datetime | None] = mapped_column(DateTime)
     gmail_connected: Mapped[bool] = mapped_column(Boolean, default=False)
+    calendar_access_token: Mapped[str | None] = mapped_column(Text)
+    calendar_refresh_token: Mapped[str | None] = mapped_column(Text)
+    calendar_token_expiry: Mapped[datetime | None] = mapped_column(DateTime)
+    calendar_connected: Mapped[bool] = mapped_column(Boolean, default=False)
     last_dispatch_run: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

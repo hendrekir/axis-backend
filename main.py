@@ -18,6 +18,7 @@ from routes.skills import router as skills_router
 from routes.payments import router as payments_router
 from routes.push import router as push_router
 from routes.gmail import router as gmail_router
+from routes.calendar import router as calendar_router
 from routes.cron import router as cron_router
 from routes.me import router as me_router
 from routes.billing import router as billing_router
@@ -29,7 +30,7 @@ load_dotenv()
 logger = logging.getLogger("axis.scheduler")
 
 # Public routes that skip auth
-PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/cron/dispatch", "/cron/digest"}
+PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/auth/calendar", "/auth/calendar/callback", "/cron/dispatch", "/cron/digest"}
 
 
 async def _scheduled_dispatch():
@@ -122,6 +123,7 @@ app.include_router(skills_router, tags=["Skills"])
 app.include_router(payments_router, prefix="/webhooks", tags=["Payments"])
 app.include_router(push_router, tags=["Push"])
 app.include_router(gmail_router, tags=["Gmail"])
+app.include_router(calendar_router, tags=["Calendar"])
 app.include_router(cron_router, tags=["Cron"])
 app.include_router(me_router, tags=["User"])
 app.include_router(billing_router, tags=["Billing"])

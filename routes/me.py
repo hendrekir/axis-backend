@@ -33,6 +33,7 @@ async def get_me(user: User = Depends(get_authenticated_user)):
         "timezone": user.timezone,
         "plan": user.plan,
         "gmail_connected": user.gmail_connected,
+        "calendar_connected": user.calendar_connected,
     }
 
 
@@ -54,4 +55,5 @@ async def update_me(
         "timezone": user.timezone,
         "plan": user.plan,
         "gmail_connected": user.gmail_connected,
+        "calendar_connected": user.calendar_connected,
     }
