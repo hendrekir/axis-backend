@@ -15,11 +15,13 @@ from routes.brief import router as brief_router
 from routes.skills import router as skills_router
 from routes.payments import router as payments_router
 from routes.push import router as push_router
+from routes.gmail import router as gmail_router
+from routes.cron import router as cron_router
 
 load_dotenv()
 
 # Public routes that skip auth
-PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/brain-dump"}
+PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/brain-dump", "/auth/gmail/callback", "/cron/dispatch", "/cron/digest"}
 
 
 @asynccontextmanager
@@ -81,6 +83,8 @@ app.include_router(brief_router, tags=["Brief"])
 app.include_router(skills_router, tags=["Skills"])
 app.include_router(payments_router, prefix="/webhooks", tags=["Payments"])
 app.include_router(push_router, tags=["Push"])
+app.include_router(gmail_router, tags=["Gmail"])
+app.include_router(cron_router, tags=["Cron"])
 
 
 @app.get("/")

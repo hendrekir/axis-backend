@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from database import Base
@@ -19,6 +19,11 @@ class User(Base):
     plan: Mapped[str] = mapped_column(String, default="free")
     plan_expires: Mapped[datetime | None] = mapped_column(DateTime)
     apns_token: Mapped[str | None] = mapped_column(String)
+    gmail_access_token: Mapped[str | None] = mapped_column(Text)
+    gmail_refresh_token: Mapped[str | None] = mapped_column(Text)
+    gmail_token_expiry: Mapped[datetime | None] = mapped_column(DateTime)
+    gmail_connected: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_dispatch_run: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -72,3 +77,90 @@ class AgentActivity(Base):
     detail: Mapped[str | None] = mapped_column(Text)
     result: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+# --- Intelligence loop tables (Session 4) ---
+
+
+class UserModel(Base):
+    __tablename__ = "user_model"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), unique=True)
+    voice_patterns: Mapped[dict] = mapped_column(JSON, default=dict)
+    relationship_graph: Mapped[dict] = mapped_column(JSON, default=dict)
+    productive_windows: Mapped[dict] = mapped_column(JSON, default=dict)
+    completion_rates: Mapped[dict] = mapped_column(JSON, default=dict)
+    notif_response_rates: Mapped[dict] = mapped_column(JSON, default=dict)
+    defer_patterns: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class Interaction(Base):
+    __tablename__ = "interactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    surface: Mapped[str] = mapped_column(String, nullable=False)
+    content_type: Mapped[str] = mapped_column(String, nullable=False)
+    content_id: Mapped[str | None] = mapped_column(String)
+    action_taken: Mapped[str] = mapped_column(String, nullable=False)
+    response_time_ms: Mapped[int | None] = mapped_column(Integer)
+    mode: Mapped[str | None] = mapped_column(String)
+    health_context: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class RelationshipGraph(Base):
+    __tablename__ = "relationship_graph"
+    __table_args__ = (UniqueConstraint("user_id", "contact_email"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    contact_email: Mapped[str] = mapped_column(String, nullable=False)
+    importance_score: Mapped[float] = mapped_column(Float, default=5.0)
+    avg_reply_time_hrs: Mapped[float | None] = mapped_column(Float)
+    reply_rate: Mapped[float | None] = mapped_column(Float)
+    total_interactions: Mapped[int] = mapped_column(Integer, default=0)
+    last_interaction: Mapped[datetime | None] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class Pattern(Base):
+    __tablename__ = "patterns"
+    __table_args__ = (UniqueConstraint("user_id", "week_of"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    best_productive_hours: Mapped[dict | None] = mapped_column(JSON)
+    deferred_categories: Mapped[dict | None] = mapped_column(JSON)
+    notif_response_windows: Mapped[dict | None] = mapped_column(JSON)
+    draft_acceptance_rate: Mapped[float | None] = mapped_column(Float)
+    email_ranking_accuracy: Mapped[float | None] = mapped_column(Float)
+    week_of = mapped_column(Date)
+
+
+class SentEmailsCache(Base):
+    __tablename__ = "sent_emails_cache"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    recipient: Mapped[str | None] = mapped_column(String)
+    recipient_type: Mapped[str | None] = mapped_column(String)
+    subject: Mapped[str | None] = mapped_column(String)
+    body_summary: Mapped[str | None] = mapped_column(Text)
+    word_count: Mapped[int | None] = mapped_column(Integer)
+    formality_score: Mapped[float | None] = mapped_column(Float)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class CollectivePattern(Base):
+    __tablename__ = "collective_patterns"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    mode: Mapped[str | None] = mapped_column(String)
+    pattern_type: Mapped[str | None] = mapped_column(String)
+    pattern_data: Mapped[dict | None] = mapped_column(JSON)
+    sample_size: Mapped[int | None] = mapped_column(Integer)
+    confidence: Mapped[float | None] = mapped_column(Float)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
