@@ -1,5 +1,8 @@
+import base64
+import logging
 import os
 from datetime import datetime
+from email.mime.text import MIMEText
 
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
@@ -7,6 +10,8 @@ from googleapiclient.discovery import build
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models import User
+
+logger = logging.getLogger("axis.gmail")
 
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -101,3 +106,43 @@ async def fetch_recent_emails(
         })
 
     return emails
+
+
+async def send_email(
+    user: User,
+    db: AsyncSession,
+    to: str,
+    subject: str,
+    body: str,
+    thread_id: str | None = None,
+    in_reply_to: str | None = None,
+) -> dict:
+    """Send an email via Gmail API using stored credentials.
+
+    Returns the sent message metadata (id, threadId, labelIds).
+    """
+    creds = await refresh_if_needed(user, db)
+    if creds is None:
+        raise ValueError("Gmail not connected")
+
+    service = build("gmail", "v1", credentials=creds)
+
+    message = MIMEText(body)
+    message["to"] = to
+    message["subject"] = subject
+
+    # Thread reply headers
+    if in_reply_to:
+        message["In-Reply-To"] = in_reply_to
+        message["References"] = in_reply_to
+
+    raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
+
+    send_body = {"raw": raw}
+    if thread_id:
+        send_body["threadId"] = thread_id
+
+    result = service.users().messages().send(userId="me", body=send_body).execute()
+
+    logger.info("Email sent to=%s subject=%s thread=%s msg_id=%s", to, subject, thread_id, result.get("id"))
+    return result

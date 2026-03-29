@@ -3,11 +3,14 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import User
+from routes.auth import get_authenticated_user
+from services.gmail_service import send_email
 
 router = APIRouter(tags=["Gmail"])
 
@@ -87,3 +90,37 @@ async def gmail_auth_callback(
     # Redirect back to the frontend settings page
     frontend = os.environ.get("FRONTEND_URL", "http://localhost:5173")
     return RedirectResponse(frontend + "/settings?gmail=connected")
+
+
+class SendEmailRequest(BaseModel):
+    to: str
+    subject: str
+    body: str
+    thread_id: str | None = None
+    in_reply_to: str | None = None
+
+
+@router.post("/gmail/send")
+async def gmail_send(
+    req: SendEmailRequest,
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send an email via the user's connected Gmail account."""
+    if not user.gmail_connected:
+        raise HTTPException(status_code=400, detail="Gmail not connected")
+
+    result = await send_email(
+        user=user,
+        db=db,
+        to=req.to,
+        subject=req.subject,
+        body=req.body,
+        thread_id=req.thread_id,
+        in_reply_to=req.in_reply_to,
+    )
+    return {
+        "status": "sent",
+        "message_id": result.get("id"),
+        "thread_id": result.get("threadId"),
+    }
