@@ -28,7 +28,7 @@ load_dotenv()
 logger = logging.getLogger("axis.scheduler")
 
 # Public routes that skip auth
-PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/brain-dump", "/auth/gmail", "/auth/gmail/callback", "/cron/dispatch", "/cron/digest"}
+PUBLIC_PATHS = {"/", "/health", "/debug/config", "/webhooks/revenuecat", "/brain-dump", "/auth/gmail", "/auth/gmail/callback", "/cron/dispatch", "/cron/digest"}
 
 
 async def _scheduled_dispatch():
@@ -133,3 +133,12 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/debug/config")
+async def debug_config():
+    return {
+        "GOOGLE_REDIRECT_URI": os.environ.get("GOOGLE_REDIRECT_URI", "NOT SET"),
+        "FRONTEND_URL": os.environ.get("FRONTEND_URL", "NOT SET"),
+        "APP_URL": os.environ.get("APP_URL", "NOT SET"),
+    }
