@@ -164,3 +164,67 @@ class CollectivePattern(Base):
     sample_size: Mapped[int | None] = mapped_column(Integer)
     confidence: Mapped[float | None] = mapped_column(Float)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+# --- Orchestration backbone tables (Session 6) ---
+
+
+class Skill(Base):
+    __tablename__ = "skills"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    data_sources: Mapped[dict] = mapped_column(JSON, default=list)
+    reasoning_model: Mapped[str] = mapped_column(String, default="claude")
+    trigger_type: Mapped[str] = mapped_column(String, default="dispatch")
+    trigger_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    output_routing: Mapped[str] = mapped_column(String, default="thread")
+    system_prompt: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class SkillExecution(Base):
+    __tablename__ = "skill_executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    skill_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("skills.id"))
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    input_context: Mapped[dict | None] = mapped_column(JSON)
+    output_result: Mapped[str | None] = mapped_column(Text)
+    model_used: Mapped[str | None] = mapped_column(String)
+    surface_delivered: Mapped[str | None] = mapped_column(String)
+    user_action: Mapped[str | None] = mapped_column(String)
+    execution_time_ms: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ApiConnection(Base):
+    __tablename__ = "api_connections"
+    __table_args__ = (UniqueConstraint("user_id", "service"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    service: Mapped[str] = mapped_column(String, nullable=False)
+    access_token: Mapped[str | None] = mapped_column(Text)
+    refresh_token: Mapped[str | None] = mapped_column(Text)
+    token_expiry: Mapped[datetime | None] = mapped_column(DateTime)
+    is_connected: Mapped[bool] = mapped_column(Boolean, default=False)
+    scopes: Mapped[dict] = mapped_column(JSON, default=list)
+    metadata_: Mapped[dict] = mapped_column("metadata", JSON, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class ModelRoute(Base):
+    __tablename__ = "model_routes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    task_type: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
+    reasoning: Mapped[str | None] = mapped_column(Text)
+    cost_per_1m_input: Mapped[float | None] = mapped_column(Float)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
