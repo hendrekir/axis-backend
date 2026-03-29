@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import User
-from services.auth_service import verify_clerk_token
 
 router = APIRouter(tags=["Gmail"])
 
@@ -41,35 +40,18 @@ def _build_flow() -> Flow:
 
 @router.get("/auth/gmail")
 async def gmail_auth_start(
-    request: Request,
-    token: str = Query(..., description="Clerk JWT passed as query param"),
-    db: AsyncSession = Depends(get_db),
+    clerk_id: str = Query(..., description="Clerk user ID"),
 ):
     """Redirect the user to Google's OAuth consent screen.
 
-    Auth is handled via ?token= query param because this is a browser
-    redirect, not a fetch request with Authorization headers.
+    No auth required — the frontend passes the Clerk user ID as a query
+    param. The callback uses it to look up the user in the database.
     """
-    claims = await verify_clerk_token(token)
-    if claims is None or not claims.get("sub"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-        )
-
-    result = await db.execute(select(User).where(User.clerk_id == claims["sub"]))
-    user = result.scalar_one_or_none()
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
-
     flow = _build_flow()
-    auth_url, state = flow.authorization_url(
+    auth_url, _state = flow.authorization_url(
         access_type="offline",
         prompt="consent",
-        state=str(user.id),
+        state=clerk_id,
     )
     return RedirectResponse(auth_url)
 
@@ -87,8 +69,9 @@ async def gmail_auth_callback(
 
     credentials = flow.credentials
 
-    # Look up user by ID passed through OAuth state
-    user = await db.get(User, state)
+    # Look up user by clerk_id passed through OAuth state
+    result = await db.execute(select(User).where(User.clerk_id == state))
+    user = result.scalar_one_or_none()
     if user is None:
         return RedirectResponse(
             os.environ.get("APP_URL", "/") + "?gmail=error&reason=user_not_found"
