@@ -74,16 +74,25 @@ def extract_summary(response: str, task_count: int) -> str:
 @router.post("/brain-dump")
 async def brain_dump(
     body: BrainDumpIn,
+    user: User = Depends(get_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Process a brain dump — extract and rank tasks from free-form text."""
-    # TODO: restore auth — user: User = Depends(get_authenticated_user)
     prompt = BRAIN_DUMP_PROMPT.format(dump_text=body.text)
 
     response_text = await generate(
         system_prompt="You are Axis, an ambient AI agent. Extract and rank tasks.",
         user_message=prompt,
     )
+
+    # Log interaction for usage tracking
+    db.add(Interaction(
+        user_id=user.id,
+        surface="web",
+        content_type="brain_dump",
+        action_taken="submitted",
+    ))
+    await db.commit()
 
     # Parse structured tasks from response
     parsed_tasks = parse_tasks(response_text)

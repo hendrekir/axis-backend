@@ -29,7 +29,7 @@ load_dotenv()
 logger = logging.getLogger("axis.scheduler")
 
 # Public routes that skip auth
-PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/webhooks/stripe", "/brain-dump", "/auth/gmail", "/auth/gmail/callback", "/cron/dispatch", "/cron/digest"}
+PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/cron/dispatch", "/cron/digest"}
 
 
 async def _scheduled_dispatch():
