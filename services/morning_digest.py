@@ -7,6 +7,7 @@ Calls Claude to produce 3-4 short thread messages. Sends a push notification.
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
@@ -24,7 +25,7 @@ DIGEST_SYSTEM = """
 You are Axis. Generate {name}'s morning brief as thread messages.
 Specific, warm, direct. Never waffle.
 Max 4 messages. Each under 80 words.
-End with "put the phone down."
+End the final message with "Your move: [specific next action]." — always give the user a clear next step. Never suggest disengaging or putting the phone down.
 
 Current mode: {mode}
 Today: {date}
@@ -41,7 +42,7 @@ Recent thread context:
 
 Axis handled silently overnight: {silent_count} items
 
-Return a JSON array of message strings:
+Return ONLY a JSON array of message strings, no markdown fences:
 ["message 1", "message 2", "message 3"]
 """
 
@@ -126,13 +127,17 @@ async def generate_digest(user: User, db: AsyncSession) -> str:
         max_tokens=1024,
     )
 
+    # Strip markdown fences if present (```json ... ```)
+    cleaned = re.sub(r'^```(?:json)?\s*\n?', '', raw.strip())
+    cleaned = re.sub(r'\n?```\s*$', '', cleaned)
+
     # Parse messages and save to thread
     try:
-        messages = json.loads(raw)
+        messages = json.loads(cleaned)
         if not isinstance(messages, list):
-            messages = [raw]
+            messages = [cleaned]
     except json.JSONDecodeError:
-        messages = [raw]
+        messages = [cleaned]
 
     full_digest = ""
     for text in messages:
