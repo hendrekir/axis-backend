@@ -473,7 +473,77 @@ Tell Claude Code: "Read CLAUDE.md v2.0. Add the 4 new database tables first, the
 
 ---
 
-*Update Section 13 current deployment + add session notes after every session.*
-*This document is the single source of truth. Load it at the start of every session.*
+---
 
-**END OF AXIS CLAUDE.md v2.0**
+## 15. INTELLIGENCE ARCHITECTURE (full detail in AXIS_INTELLIGENCE_v1.md)
+
+### AI Models
+| Model | Use | Cost/1M |
+|---|---|---|
+| claude-sonnet-4-6 | Email drafts, dispatch, digest, voice matching | $3-15 |
+| perplexity sonar-pro | Research, news synthesis, person lookup | ~$1 flat |
+| grok-4.1 | Social, entertainment, X trends, music drops | $0.20 |
+| gemini-flash-lite | Triage layer, YouTube video, image analysis | $0.01 |
+| gpt-5.4 | Code execution, image generation | $1.75-14 |
+| deepseek-v4 | Bulk non-sensitive ONLY - no personal data | $0.04 |
+| llama-4 | Privacy-first on-device future (10M context) | self-hosted |
+
+### Data Sources
+- Communication: Gmail, Google Calendar, Slack, Outlook, WhatsApp Business
+- Content: YouTube (Gemini processes video natively), Spotify, Reddit, X/Twitter, Hacker News, Product Hunt
+- Knowledge: Google News, RSS feeds, Perplexity real-time web
+- Finance: Stripe, Xero, Yahoo Finance, CoinGecko
+- Health/Context: HealthKit, CoreLocation, OpenWeather, Eventbrite
+
+### Signal Over Noise - 5 filters on every item
+1. Relevance - connects to something user demonstrably cares about
+2. Urgency - score 1-10, below 5 = digest or silent
+3. Context - relevant to what is in user calendar/location RIGHT NOW
+4. Deduplication - same story shown once, best source wins
+5. Apprentice - 8+ dismissals from a topic = auto-deprioritise
+
+### Triage: All inputs -> Gemini Flash-Lite ($0.01) -> 95% discarded -> specialist model with user context
+### Cost: ~$2.37/user/month vs $9 revenue = ~74% gross margin
+
+---
+
+## 16. CURRENT STATUS
+
+Date: 29 March 2026 - Session 5 complete
+
+What is live:
+- Backend: https://web-production-32f5d.up.railway.app
+- Frontend: https://axis-web-chi.vercel.app
+- Gmail OAuth connected and reading real inbox every 15 min
+- Dispatch job + morning digest (6:50AM) running via APScheduler
+- 6 memory tables live in Neon
+- All 6 web screens live - Thread, Brain Dump, Signal, Skills, Brief, Settings
+- Thread responding as Axis in character
+- Stripe 9/mo paywall working end to end
+- Mode switcher (Personal/Work/Builder/Student/Founder) live
+- Brain dump usage counter and paywall gate working
+
+What is NOT built yet:
+- Gmail SEND (draft + one-tap send)
+- Google Calendar OAuth
+- Skills framework (user-defined workflows)
+- Multi-model routing (Perplexity, Grok, Gemini)
+- Meeting prep cron
+- YouTube / Reddit / News / Grok integrations
+- Apprentice visibility dashboard
+- iOS app
+
+Context files (load all at session start):
+- AXIS_CLAUDE.md - this file
+- AXIS_VISION_v1.md - full product vision
+- AXIS_BUILD_FRAMEWORK_v1.md - architecture
+- AXIS_INTELLIGENCE_v1.md - AI models + data sources + signal filtering
+- AXIS_SESSION_6_PLAN.md - exact build order
+
+Session 6 start:
+cd ~/forge/axis-backend && claude
+Tell Claude Code: Read all 5 AXIS context files. Session 6: build orchestration backbone. Start with skills + api_connections tables, then model_router.py, then triage_service.py.
+
+*Load all 5 AXIS context files at the start of every session.*
+
+**END OF AXIS CLAUDE.md v2.1**
