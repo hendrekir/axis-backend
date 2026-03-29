@@ -24,6 +24,7 @@ from routes.me import router as me_router
 from routes.billing import router as billing_router
 from services.dispatch import run_dispatch
 from services.morning_digest import run_morning_digest
+from services.apprentice import run_all_improvement, run_all_voice_rebuild
 
 load_dotenv()
 
@@ -53,6 +54,26 @@ async def _scheduled_digest():
             logger.error("Digest job failed: %s", e)
 
 
+async def _scheduled_improvement():
+    """Sunday 3AM UTC: run improvement cycle for all Pro users."""
+    async with async_session() as db:
+        try:
+            results = await run_all_improvement(db)
+            logger.info("Improvement cycle complete: %d users processed", len(results))
+        except Exception as e:
+            logger.error("Improvement cycle failed: %s", e)
+
+
+async def _scheduled_voice_rebuild():
+    """Sunday 4AM UTC: rebuild voice models for all Pro+Gmail users."""
+    async with async_session() as db:
+        try:
+            results = await run_all_voice_rebuild(db)
+            logger.info("Voice rebuild complete: %d users processed", len(results))
+        except Exception as e:
+            logger.error("Voice rebuild failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create all tables on startup
@@ -63,8 +84,10 @@ async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(_scheduled_dispatch, "interval", minutes=15, id="dispatch")
     scheduler.add_job(_scheduled_digest, "interval", minutes=15, id="digest")
+    scheduler.add_job(_scheduled_improvement, "cron", day_of_week="sun", hour=3, minute=0, id="improvement")
+    scheduler.add_job(_scheduled_voice_rebuild, "cron", day_of_week="sun", hour=4, minute=0, id="voice_rebuild")
     scheduler.start()
-    logger.info("Scheduler started — dispatch and digest every 15 minutes")
+    logger.info("Scheduler started — dispatch/digest every 15min, improvement Sunday 3AM, voice Sunday 4AM")
 
     yield
 
