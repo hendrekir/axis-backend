@@ -1,13 +1,14 @@
 import os
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import User
-from routes.auth import get_authenticated_user
+from services.auth_service import verify_clerk_token
 
 router = APIRouter(tags=["Gmail"])
 
@@ -39,8 +40,31 @@ def _build_flow() -> Flow:
 
 
 @router.get("/auth/gmail")
-async def gmail_auth_start(request: Request, user: User = Depends(get_authenticated_user)):
-    """Redirect the user to Google's OAuth consent screen."""
+async def gmail_auth_start(
+    request: Request,
+    token: str = Query(..., description="Clerk JWT passed as query param"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Redirect the user to Google's OAuth consent screen.
+
+    Auth is handled via ?token= query param because this is a browser
+    redirect, not a fetch request with Authorization headers.
+    """
+    claims = await verify_clerk_token(token)
+    if claims is None or not claims.get("sub"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+
+    result = await db.execute(select(User).where(User.clerk_id == claims["sub"]))
+    user = result.scalar_one_or_none()
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
     flow = _build_flow()
     auth_url, state = flow.authorization_url(
         access_type="offline",
