@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
+from sqlalchemy import text
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -79,6 +80,18 @@ async def lifespan(app: FastAPI):
     # Create all tables on startup
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Migrate columns added after initial table creation
+    async with engine.begin() as conn:
+        migrations = [
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_access_token TEXT",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_refresh_token TEXT",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_token_expiry TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_connected BOOLEAN DEFAULT FALSE",
+        ]
+        for sql in migrations:
+            await conn.execute(text(sql))
+        logger.info("Startup migrations applied (%d statements)", len(migrations))
 
     # Start scheduler
     scheduler = AsyncIOScheduler()
