@@ -103,6 +103,8 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_refresh_token TEXT",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_token_expiry TIMESTAMP",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_connected BOOLEAN DEFAULT FALSE",
+            # Context notes column (Session 7)
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS context_notes TEXT",
             # Notes table + GIN full-text index (Session 7)
             """CREATE TABLE IF NOT EXISTS notes (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

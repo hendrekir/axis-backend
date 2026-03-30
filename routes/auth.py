@@ -26,9 +26,10 @@ async def get_current_user(token: str, db: AsyncSession | None = None) -> User |
         # Middleware call — return minimal user info as a dict-like object
         # The full DB lookup happens in get_authenticated_user
         class MinimalUser:
-            def __init__(self, clerk_id):
+            def __init__(self, clerk_id, claims):
                 self.clerk_id = clerk_id
-        return MinimalUser(clerk_id)
+                self.claims = claims
+        return MinimalUser(clerk_id, claims)
 
     # Full DB lookup
     result = await db.execute(select(User).where(User.clerk_id == clerk_id))
@@ -43,9 +44,29 @@ async def get_authenticated_user(request: Request, db: AsyncSession = Depends(ge
 
     result = await db.execute(select(User).where(User.clerk_id == minimal_user.clerk_id))
     user = result.scalar_one_or_none()
+
+    # Extract name from Clerk JWT claims
+    claims = getattr(minimal_user, "claims", {}) or {}
+    clerk_name = (
+        claims.get("given_name")
+        or claims.get("name")
+        or claims.get("first_name")
+        or (claims.get("user_metadata", {}) or {}).get("name")
+    )
+
     if user is None:
-        user = User(clerk_id=minimal_user.clerk_id, mode="personal", plan="free")
+        user = User(
+            clerk_id=minimal_user.clerk_id,
+            name=clerk_name,
+            mode="personal",
+            plan="free",
+        )
         db.add(user)
         await db.commit()
         await db.refresh(user)
+    elif not user.name and clerk_name:
+        user.name = clerk_name
+        await db.commit()
+        await db.refresh(user)
+
     return user

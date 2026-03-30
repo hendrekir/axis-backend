@@ -21,7 +21,8 @@ class ModeEnum(str, Enum):
 
 
 class UpdateMeRequest(BaseModel):
-    mode: ModeEnum
+    mode: ModeEnum | None = None
+    context_notes: str | None = None
 
 
 async def _is_spotify_connected(user_id, db: AsyncSession) -> bool:
@@ -50,6 +51,7 @@ async def get_me(
         "gmail_connected": user.gmail_connected,
         "calendar_connected": user.calendar_connected,
         "spotify_connected": await _is_spotify_connected(user.id, db),
+        "context_notes": user.context_notes or "",
     }
 
 
@@ -59,8 +61,11 @@ async def update_me(
     user: User = Depends(get_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Update the current user's mode."""
-    user.mode = body.mode.value
+    """Update the current user's profile."""
+    if body.mode is not None:
+        user.mode = body.mode.value
+    if body.context_notes is not None:
+        user.context_notes = body.context_notes
     db.add(user)
     await db.commit()
     await db.refresh(user)
@@ -73,4 +78,5 @@ async def update_me(
         "gmail_connected": user.gmail_connected,
         "calendar_connected": user.calendar_connected,
         "spotify_connected": await _is_spotify_connected(user.id, db),
+        "context_notes": user.context_notes or "",
     }

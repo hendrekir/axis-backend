@@ -10,6 +10,7 @@ from models import User, Task, ThreadMessage
 from prompts.thread_system import AXIS_SYSTEM
 from routes.auth import get_authenticated_user
 from services.claude_service import chat
+from services.context_assembler import assemble_context_header
 from services.notes_service import save_note, search_notes
 
 # Patterns that trigger note saving
@@ -104,12 +105,16 @@ async def send_message(
         notes_context = (notes_context + "\n" if notes_context else "") + \
             f"[You just saved a note: \"{note_saved.content}\". Confirm to the user.]"
 
+    # Assemble full context header (context_notes + user model)
+    context_header = await assemble_context_header(user, db)
+    full_notes_context = "\n\n".join(filter(None, [context_header, notes_context]))
+
     # Build system prompt
     system = AXIS_SYSTEM.format(
         name=user.name or "there",
         mode=user.mode,
         top_tasks=tasks_str,
-        notes_context=notes_context,
+        notes_context=full_notes_context,
     )
 
     # Build messages array for Claude
