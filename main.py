@@ -22,6 +22,7 @@ from routes.gmail import router as gmail_router
 from routes.calendar import router as calendar_router
 from routes.spotify import router as spotify_router
 from routes.apprentice import router as apprentice_router
+from routes.notes import router as notes_router
 from routes.cron import router as cron_router
 from routes.me import router as me_router
 from routes.billing import router as billing_router
@@ -102,6 +103,17 @@ async def lifespan(app: FastAPI):
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_refresh_token TEXT",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_token_expiry TIMESTAMP",
             "ALTER TABLE users ADD COLUMN IF NOT EXISTS calendar_connected BOOLEAN DEFAULT FALSE",
+            # Notes table + GIN full-text index (Session 7)
+            """CREATE TABLE IF NOT EXISTS notes (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                content TEXT NOT NULL,
+                tags TEXT[] DEFAULT '{}',
+                source TEXT DEFAULT 'thread',
+                context_snapshot JSONB DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT NOW()
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_notes_content_fts ON notes USING gin(to_tsvector('english', content))",
         ]
         for sql in migrations:
             await conn.execute(text(sql))
@@ -177,6 +189,7 @@ app.include_router(gmail_router, tags=["Gmail"])
 app.include_router(calendar_router, tags=["Calendar"])
 app.include_router(spotify_router, tags=["Spotify"])
 app.include_router(apprentice_router, tags=["Apprentice"])
+app.include_router(notes_router, tags=["Notes"])
 app.include_router(cron_router, tags=["Cron"])
 app.include_router(me_router, tags=["User"])
 app.include_router(billing_router, tags=["Billing"])

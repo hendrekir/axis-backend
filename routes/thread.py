@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -8,6 +10,19 @@ from models import User, Task, ThreadMessage
 from prompts.thread_system import AXIS_SYSTEM
 from routes.auth import get_authenticated_user
 from services.claude_service import chat
+from services.notes_service import save_note, search_notes
+
+# Patterns that trigger note saving
+_SAVE_PATTERN = re.compile(
+    r"^(remember\s|note\s(this|that)|save\s(this|that)|don't\sforget)",
+    re.IGNORECASE,
+)
+
+# Patterns that trigger note recall
+_RECALL_PATTERN = re.compile(
+    r"(what\s(do\sI|did\sI)\s(know|say|note|save)\s(about|on|regarding)\s+)(.+)",
+    re.IGNORECASE,
+)
 
 router = APIRouter()
 
@@ -41,6 +56,30 @@ async def send_message(
     db.add(user_msg)
     await db.flush()
 
+    # Detect note save intent
+    note_saved = None
+    if _SAVE_PATTERN.search(body.content):
+        note_saved = await save_note(
+            user_id=user.id,
+            content=body.content,
+            source="thread",
+            context={"mode": user.mode},
+            db=db,
+        )
+
+    # Detect note recall intent and fetch relevant notes
+    notes_context = ""
+    recall_match = _RECALL_PATTERN.search(body.content)
+    if recall_match:
+        topic = recall_match.group(5).strip().rstrip("?.")
+        found = await search_notes(user.id, topic, db, limit=5)
+        if found:
+            notes_context = "Relevant saved notes:\n" + "\n".join(
+                f"- {n['content']}" for n in found
+            )
+        else:
+            notes_context = f"No saved notes found about '{topic}'."
+
     # Fetch recent thread history for context
     result = await db.execute(
         select(ThreadMessage)
@@ -60,13 +99,17 @@ async def send_message(
     top_tasks = result.scalars().all()
     tasks_str = ", ".join(t.title for t in top_tasks) or "None set"
 
+    # Add note-saved context for Claude
+    if note_saved:
+        notes_context = (notes_context + "\n" if notes_context else "") + \
+            f"[You just saved a note: \"{note_saved.content}\". Confirm to the user.]"
+
     # Build system prompt
     system = AXIS_SYSTEM.format(
         name=user.name or "there",
         mode=user.mode,
-        energy="normal",
         top_tasks=tasks_str,
-        recent_context="Thread conversation in progress.",
+        notes_context=notes_context,
     )
 
     # Build messages array for Claude
