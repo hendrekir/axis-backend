@@ -29,6 +29,8 @@ from routes.billing import router as billing_router
 from services.dispatch import run_dispatch
 from services.morning_digest import run_morning_digest
 from services.apprentice import run_all_improvement, run_all_voice_rebuild
+from services.watch_service import run_all_watches
+from services.retrospective_service import run_all_retrospectives
 from services.meeting_prep import run_meeting_prep
 
 load_dotenv()
@@ -79,6 +81,27 @@ async def _scheduled_voice_rebuild():
             logger.error("Voice rebuild failed: %s", e)
 
 
+async def _scheduled_retrospective():
+    """Sunday 6PM UTC: generate and send weekly retrospectives for Pro users."""
+    async with async_session() as db:
+        try:
+            results = await run_all_retrospectives(db)
+            logger.info("Retrospectives complete: %d users", len(results))
+        except Exception as e:
+            logger.error("Retrospective job failed: %s", e)
+
+
+async def _scheduled_watches():
+    """Hourly: check all active watches for material changes."""
+    async with async_session() as db:
+        try:
+            alerts = await run_all_watches(db)
+            if alerts:
+                logger.info("Watch cycle: %d alerts triggered", len(alerts))
+        except Exception as e:
+            logger.error("Watch cycle failed: %s", e)
+
+
 async def _scheduled_meeting_prep():
     """Every 5 minutes: check for meetings starting in 25-35 minutes, generate briefs."""
     async with async_session() as db:
@@ -116,6 +139,38 @@ async def lifespan(app: FastAPI):
                 created_at TIMESTAMP DEFAULT NOW()
             )""",
             "CREATE INDEX IF NOT EXISTS ix_notes_content_fts ON notes USING gin(to_tsvector('english', content))",
+            # Watches table (Session 7)
+            """CREATE TABLE IF NOT EXISTS watches (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                topic TEXT NOT NULL,
+                watch_type TEXT DEFAULT 'general',
+                last_checked_at TIMESTAMP,
+                last_result TEXT,
+                threshold TEXT DEFAULT 'material_change',
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT NOW()
+            )""",
+            # Follow-ups table (Session 7)
+            """CREATE TABLE IF NOT EXISTS follow_ups (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                email_id TEXT,
+                to_email TEXT,
+                subject TEXT,
+                sent_at TIMESTAMP,
+                follow_up_due TIMESTAMP,
+                followed_up_at TIMESTAMP,
+                is_done BOOLEAN DEFAULT FALSE
+            )""",
+            # Weekly retrospectives table (Session 7)
+            """CREATE TABLE IF NOT EXISTS weekly_retrospectives (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                week_start DATE,
+                content TEXT,
+                sent_at TIMESTAMP
+            )""",
         ]
         for sql in migrations:
             await conn.execute(text(sql))
@@ -125,11 +180,13 @@ async def lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(_scheduled_dispatch, "interval", minutes=15, id="dispatch")
     scheduler.add_job(_scheduled_digest, "interval", minutes=15, id="digest")
+    scheduler.add_job(_scheduled_watches, "interval", hours=1, id="watches")
     scheduler.add_job(_scheduled_meeting_prep, "interval", minutes=5, id="meeting_prep")
     scheduler.add_job(_scheduled_improvement, "cron", day_of_week="sun", hour=3, minute=0, id="improvement")
     scheduler.add_job(_scheduled_voice_rebuild, "cron", day_of_week="sun", hour=4, minute=0, id="voice_rebuild")
+    scheduler.add_job(_scheduled_retrospective, "cron", day_of_week="sun", hour=18, minute=0, id="retrospective")
     scheduler.start()
-    logger.info("Scheduler started — dispatch/digest every 15min, meeting prep every 5min, improvement Sunday 3AM, voice Sunday 4AM")
+    logger.info("Scheduler started — dispatch/digest 15min, watches hourly, meeting prep 5min, improvement Sun 3AM, voice Sun 4AM, retro Sun 6PM")
 
     yield
 

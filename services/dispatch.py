@@ -28,6 +28,7 @@ from services.push_service import send_push
 from services.skill_engine import run_dispatch_skills
 from services.triage_service import triage_items
 from services.signal_filter import apply_filters
+from services.followup_service import scan_for_missing_replies
 
 logger = logging.getLogger("axis.dispatch")
 
@@ -372,6 +373,17 @@ async def dispatch_user(user: User, db: AsyncSession) -> dict:
     # 8. Run dispatch-triggered skills
     skill_results = await run_dispatch_skills(user, db)
     stats["skills_run"] = len(skill_results)
+
+    # 8b. Follow-up tracker — surface unreplied emails
+    if user.gmail_connected:
+        try:
+            followups = await scan_for_missing_replies(user, db)
+            for fu in followups:
+                fu["surface"] = "digest"
+                stats["digest"] += 1
+                await _route_item(fu, user, db)
+        except Exception as e:
+            logger.warning("Follow-up scan failed for user %s: %s", user.id, e)
 
     # 9. Update last_dispatch_run
     user.last_dispatch_run = datetime.utcnow()

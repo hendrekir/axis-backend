@@ -13,6 +13,7 @@ from services.claude_service import chat
 from services.context_assembler import assemble_context_header
 from services.notes_service import save_note, search_notes
 from services.status_service import get_status
+from services.watch_service import create_watch
 
 # Patterns that trigger note saving
 _SAVE_PATTERN = re.compile(
@@ -29,6 +30,12 @@ _RECALL_PATTERN = re.compile(
 # Patterns that trigger status briefing
 _STATUS_PATTERN = re.compile(
     r"(status\s+(?:of|on)\s+|update\s+on\s+|where\s+are\s+we\s+with\s+|what'?s\s+happening\s+with\s+)(.+)",
+    re.IGNORECASE,
+)
+
+# Patterns that trigger watch creation
+_WATCH_PATTERN = re.compile(
+    r"(watch\s+|monitor\s+|let\s+me\s+know\s+if\s+|keep\s+an?\s+eye\s+on\s+|alert\s+me\s+(?:if|when)\s+)(.+?)(\s+(?:for\s+me|changes?))?$",
     re.IGNORECASE,
 )
 
@@ -95,6 +102,17 @@ async def send_message(
         briefing = await get_status(user, topic, db)
         notes_context = (notes_context + "\n\n" if notes_context else "") + \
             f"Status briefing for '{topic}':\n{briefing}"
+
+    # Detect watch intent
+    watch_created = None
+    watch_match = _WATCH_PATTERN.search(body.content)
+    if watch_match and not status_match and not note_saved:
+        topic = watch_match.group(2).strip().rstrip("?.")
+        watch_created = await create_watch(
+            user_id=user.id, topic=topic, db=db,
+        )
+        notes_context = (notes_context + "\n\n" if notes_context else "") + \
+            f"[You just created a watch on \"{topic}\". It will be checked hourly. Confirm to the user.]"
 
     # Fetch recent thread history for context
     result = await db.execute(

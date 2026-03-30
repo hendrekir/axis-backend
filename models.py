@@ -239,6 +239,47 @@ class Note(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+# --- Session 7 tables ---
+
+
+class Watch(Base):
+    __tablename__ = "watches"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    watch_type: Mapped[str] = mapped_column(String, default="general")
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_result: Mapped[str | None] = mapped_column(Text)
+    threshold: Mapped[str] = mapped_column(String, default="material_change")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class FollowUp(Base):
+    __tablename__ = "follow_ups"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    email_id: Mapped[str | None] = mapped_column(String)
+    to_email: Mapped[str | None] = mapped_column(String)
+    subject: Mapped[str | None] = mapped_column(String)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    follow_up_due: Mapped[datetime | None] = mapped_column(DateTime)
+    followed_up_at: Mapped[datetime | None] = mapped_column(DateTime)
+    is_done: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class WeeklyRetrospective(Base):
+    __tablename__ = "weekly_retrospectives"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    week_start = mapped_column(Date)
+    content: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class ModelRoute(Base):
     __tablename__ = "model_routes"
 
