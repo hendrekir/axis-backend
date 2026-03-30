@@ -164,13 +164,27 @@ async def rebuild_voice_model(user: User, db: AsyncSession) -> dict:
 
 async def run_all_improvement(db: AsyncSession) -> list[dict]:
     """Run improvement cycle for all Pro users."""
+    from services.suggestion_service import detect_patterns
+
     result = await db.execute(select(User).where(User.plan == "pro"))
     users = result.scalars().all()
     results = []
     for user in users:
         logger.info("Running improvement cycle for %s", user.name)
         r = await run_improvement_cycle(user, db)
+
+        # Detect patterns and generate proactive suggestions
+        try:
+            suggestions = await detect_patterns(user, db)
+            if suggestions:
+                r["suggestions"] = len(suggestions)
+                logger.info("Generated %d skill suggestions for %s", len(suggestions), user.name)
+        except Exception as e:
+            logger.warning("Suggestion detection failed for %s: %s", user.name, e)
+
         results.append({"user_id": str(user.id), **r})
+
+    await db.commit()
     return results
 
 

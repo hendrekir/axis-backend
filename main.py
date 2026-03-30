@@ -171,6 +171,17 @@ async def lifespan(app: FastAPI):
                 content TEXT,
                 sent_at TIMESTAMP
             )""",
+            # Skill suggestions table (Session 7)
+            """CREATE TABLE IF NOT EXISTS skill_suggestions (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                pattern_detected TEXT NOT NULL,
+                suggested_name TEXT NOT NULL,
+                suggested_config JSONB DEFAULT '{}',
+                suggested_at TIMESTAMP DEFAULT NOW(),
+                accepted BOOLEAN DEFAULT FALSE,
+                dismissed BOOLEAN DEFAULT FALSE
+            )""",
         ]
         for sql in migrations:
             await conn.execute(text(sql))

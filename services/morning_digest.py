@@ -18,6 +18,7 @@ from models import User, Task, ThreadMessage, UserModel, Interaction
 from services.claude_service import generate
 from services.gmail_service import fetch_recent_emails
 from services.push_service import send_push
+from services.weather_service import get_weather
 
 logger = logging.getLogger("axis.digest")
 
@@ -39,6 +40,9 @@ Active tasks:
 
 Recent thread context:
 {recent_context}
+
+Weather context for today's events:
+{weather_context}
 
 Axis handled silently overnight: {silent_count} items
 
@@ -90,6 +94,33 @@ async def generate_digest(user: User, db: AsyncSession) -> str:
         else:
             email_summary = "No new emails overnight."
 
+    # Weather for today's calendar events
+    weather_context = "No weather data."
+    if user.calendar_connected:
+        try:
+            from services.calendar_service import fetch_todays_events
+            today_events = await fetch_todays_events(user, db)
+            weather_parts = []
+            seen_cities = set()
+            for evt in today_events:
+                location = evt.get("location", "")
+                if not location or location in seen_cities:
+                    continue
+                seen_cities.add(location)
+                w = await get_weather(location)
+                if w:
+                    rain_note = " Rain expected." if w["rain_chance"] else ""
+                    # Rough leave time: assume 30 min for local, 60 min otherwise
+                    leave_note = "Leave 30 min before." if len(location) < 30 else "Leave 60 min before."
+                    weather_parts.append(
+                        f"{evt['summary']} at {evt.get('start_dt', '?')} — "
+                        f"{location}: {w['temp_c']}C {w['condition']}.{rain_note} {leave_note}"
+                    )
+            if weather_parts:
+                weather_context = "\n".join(weather_parts)
+        except Exception as e:
+            logger.warning("Weather fetch for digest failed for user %s: %s", user.id, e)
+
     # Count silent interactions from overnight dispatch
     result = await db.execute(
         select(Interaction)
@@ -117,6 +148,7 @@ async def generate_digest(user: User, db: AsyncSession) -> str:
         email_count=email_count,
         tasks=tasks_text,
         recent_context=context_text,
+        weather_context=weather_context,
         silent_count=silent_count,
     )
 

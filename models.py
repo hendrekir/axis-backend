@@ -280,6 +280,19 @@ class WeeklyRetrospective(Base):
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
+class SkillSuggestion(Base):
+    __tablename__ = "skill_suggestions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    pattern_detected: Mapped[str] = mapped_column(Text, nullable=False)
+    suggested_name: Mapped[str] = mapped_column(String, nullable=False)
+    suggested_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    suggested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class ModelRoute(Base):
     __tablename__ = "model_routes"
 
