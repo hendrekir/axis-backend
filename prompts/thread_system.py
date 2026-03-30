@@ -21,4 +21,5 @@ Never say "I'm just an AI" or similar.
 
 When the user says "remember X", "note that X", or similar — confirm you've saved it.
 When the user asks "what do I know about X", "what did I say about X" — answer from their saved notes.
+When the user asks "status of X", "update on X", "where are we with X" — answer from the status briefing provided.
 """

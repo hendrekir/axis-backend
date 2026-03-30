@@ -12,6 +12,7 @@ from routes.auth import get_authenticated_user
 from services.claude_service import chat
 from services.context_assembler import assemble_context_header
 from services.notes_service import save_note, search_notes
+from services.status_service import get_status
 
 # Patterns that trigger note saving
 _SAVE_PATTERN = re.compile(
@@ -22,6 +23,12 @@ _SAVE_PATTERN = re.compile(
 # Patterns that trigger note recall
 _RECALL_PATTERN = re.compile(
     r"(what\s(do\sI|did\sI)\s(know|say|note|save)\s(about|on|regarding)\s+)(.+)",
+    re.IGNORECASE,
+)
+
+# Patterns that trigger status briefing
+_STATUS_PATTERN = re.compile(
+    r"(status\s+(?:of|on)\s+|update\s+on\s+|where\s+are\s+we\s+with\s+|what'?s\s+happening\s+with\s+)(.+)",
     re.IGNORECASE,
 )
 
@@ -80,6 +87,14 @@ async def send_message(
             )
         else:
             notes_context = f"No saved notes found about '{topic}'."
+
+    # Detect status intent
+    status_match = _STATUS_PATTERN.search(body.content)
+    if status_match:
+        topic = status_match.group(2).strip().rstrip("?.")
+        briefing = await get_status(user, topic, db)
+        notes_context = (notes_context + "\n\n" if notes_context else "") + \
+            f"Status briefing for '{topic}':\n{briefing}"
 
     # Fetch recent thread history for context
     result = await db.execute(
