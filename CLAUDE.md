@@ -477,82 +477,59 @@ Tell Claude Code: "Read CLAUDE.md v2.0. Add the 4 new database tables first, the
 
 ## 15. INTELLIGENCE ARCHITECTURE (full detail in AXIS_INTELLIGENCE_v1.md)
 
-### AI Models
-| Model | Use | Cost/1M |
-|---|---|---|
-| claude-sonnet-4-6 | Email drafts, dispatch, digest, voice matching | $3-15 |
-| perplexity sonar-pro | Research, news synthesis, person lookup | ~$1 flat |
-| grok-4.1 | Social, entertainment, X trends, music drops | $0.20 |
-| gemini-flash-lite | Triage layer, YouTube video, image analysis | $0.01 |
-| gpt-5.4 | Code execution, image generation | $1.75-14 |
-| deepseek-v4 | Bulk non-sensitive ONLY - no personal data | $0.04 |
-| llama-4 | Privacy-first on-device future (10M context) | self-hosted |
+AI Models: Claude (email/voice/reasoning) · Perplexity (research/news) · Grok (social/entertainment)
+Gemini Flash-Lite (triage//bin/sh.01) · Gemini Pro (reasoning) · GPT-5 (code/images) · DeepSeek (bulk) · Llama 4 (on-device)
 
-### Data Sources
-- Communication: Gmail, Google Calendar, Slack, Outlook, WhatsApp Business
-- Content: YouTube (Gemini processes video natively), Spotify, Reddit, X/Twitter, Hacker News, Product Hunt
-- Knowledge: Google News, RSS feeds, Perplexity real-time web
-- Finance: Stripe, Xero, Yahoo Finance, CoinGecko
-- Health/Context: HealthKit, CoreLocation, OpenWeather, Eventbrite
+Data Sources: Gmail · Calendar · Spotify · Reddit · YouTube · HN · X/Twitter · Stripe · Xero
+OpenWeather · Google Maps · HealthKit · CoreLocation · Contacts · Perplexity web
 
-### Signal Over Noise - 5 filters on every item
-1. Relevance - connects to something user demonstrably cares about
-2. Urgency - score 1-10, below 5 = digest or silent
-3. Context - relevant to what is in user calendar/location RIGHT NOW
-4. Deduplication - same story shown once, best source wins
-5. Apprentice - 8+ dismissals from a topic = auto-deprioritise
+Signal Over Noise: Gemini triage (95% discarded) → 5-layer filter → specialist model → output
 
-### Triage: All inputs -> Gemini Flash-Lite ($0.01) -> 95% discarded -> specialist model with user context
-### Cost: ~$2.37/user/month vs $9 revenue = ~74% gross margin
+Cost: ~.37/user/month vs  revenue = ~74% gross margin
 
 ---
 
-## 16. CURRENT STATUS
+## 16. COMPLETE FEATURE RANKING (24 features — AXIS_BUILD_FRAMEWORK_v2.md)
 
-Date: 29 March 2026 — Session 6 complete
+Tier 1: Smart notes · Status on anything · Expert intelligence · Context notes · Proactive skill suggestions · Planning partner
+Tier 2: Ambient monitoring · Risk detection · Multi-turn execution · [Send] button · PWA · Follow-up tracker · Voice input
+Tier 3: Daily briefing command · Relationship health · Weather+travel · Weekly email · Zapier · Stripe finance
+Tier 4 (iOS/Phase 6): HomeKit · Hugging Face · Predictive scheduling · Dynamic Island · Phone agent
 
-What is live:
+---
+
+## 17. CURRENT STATUS
+
+Date: 29 March 2026 — Session 7 in progress
+
+Live in production:
 - Backend: https://web-production-32f5d.up.railway.app
 - Frontend: https://axis-web-chi.vercel.app
-- Gmail OAuth connected — read + send working end to end
-- Google Calendar OAuth — events + conflict detection
-- Dispatch v2 running — skills-aware, multi-model routing, calendar context
-- Morning digest cron (6:50AM) running via APScheduler
-- Apprentice crons wired: Sunday 3AM improvement cycle, Sunday 4AM voice rebuild
-- 10 database tables live in Neon (6 memory + 4 orchestration)
-- Skills framework live — 6 built-in skills seeded per user (email, calendar, finance, research, entertainment, site)
-- Multi-model router working — Claude (default), Perplexity (research), Grok (entertainment), Gemini Flash-Lite (triage)
-- Triage service — Gemini pre-filter classifies items before expensive models
-- Signal filter — 5-layer noise reduction (relevance, urgency, context, dedup, apprentice)
-- All 6 web screens live — Thread, Brain Dump, Signal, Skills, Brief, Settings
-- Thread responding as Axis in character
-- Stripe $9/mo paywall working end to end
-- Mode switcher (Personal/Work/Builder/Student/Founder) live
-- Brain dump usage counter and paywall gate working
-- pool_pre_ping + pool_recycle for Neon connection stability
-- YouTube, Reddit, News data source services ready (need API keys to activate)
+- Gmail OAuth (read + send) · Google Calendar OAuth · Spotify OAuth
+- Dispatch v3 (triage + signal filter wired) every 15 min
+- Morning digest 6:50AM Brisbane
+- Meeting prep cron every 5 min
+- Auto email drafts for urgency 8+ emails
+- 6 skills seeded and live (email/calendar/finance/research/entertainment/site)
+- Apprentice crons (Sunday 3AM + 4AM)
+- Apprentice screen · Skills screen (live DB) · Settings (3 connected services)
+- API keys: Anthropic + Clerk + Google + Spotify + Stripe + Gemini + Grok
 
-What is NOT built yet:
-- Meeting prep cron (30min before events)
-- Voice-matched email draft prompt (needs voice model data)
-- [Send] / [Edit] / [Dismiss] action buttons in React thread
-- Spotify OAuth integration
-- Apprentice visibility dashboard
-- Connect Calendar button in Settings screen
-- iOS app
+Session 7 builds next:
+context_notes · [Send] button · smart notes · status command · expert intelligence
+voice input · PWA · follow-up tracker · weather+travel · ambient monitoring
+risk detection · proactive suggestions · multi-turn execution · planning skill
+weekly email · Zapier webhook · Stripe Connect
 
-Context files (load all at session start):
-- CLAUDE.md — this file
-- AXIS_VISION_v1.md — full product vision
-- AXIS_BUILD_FRAMEWORK_v1.md — architecture
-- AXIS_INTELLIGENCE_v1.md — AI models + data sources + signal filtering
-- AXIS_BUILD_CHECKLIST_v1.md — complete task checklist
-- AXIS_SESSION_6_PLAN.md — Session 6 build order (complete)
+Context files (load all 6 every session):
+- AXIS_CLAUDE.md
+- AXIS_VISION_v1.md
+- AXIS_BUILD_FRAMEWORK_v2.md
+- AXIS_INTELLIGENCE_v1.md
+- AXIS_BUILD_CHECKLIST_v2.md
+- AXIS_SESSION_7_PLAN.md
 
-Session 7 start:
-cd ~/forge/axis-backend && claude
-Tell Claude Code: Read all context files. Session 7: entertainment layer — Spotify OAuth, meeting prep cron, action buttons in React, apprentice dashboard.
+Session start: cd ~/forge/axis-backend && claude
+First message: Read all 6 AXIS context files. Session 7 — start with A1 context_notes.
 
-*Load all context files at the start of every session.*
-
-**END OF AXIS CLAUDE.md v2.2**
+**END OF AXIS CLAUDE.md v2.3**

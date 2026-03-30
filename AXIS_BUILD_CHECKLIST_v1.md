@@ -1,6 +1,6 @@
 # AXIS — Full Build Checklist
 ## Every task, every file, every integration. Do not summarise.
-### Last updated: Session 6 · March 2026
+### Last updated: Session 5 · March 2026
 
 Legend: ✅ Done · ⬜ Not started · 🔄 In progress · 🚫 Blocked (needs prior step)
 
@@ -137,112 +137,254 @@ Legend: ✅ Done · ⬜ Not started · 🔄 In progress · 🚫 Blocked (needs p
 ## PART 2 — SESSION 6 (Build now — orchestration backbone)
 
 ### 2.1 Database — New Tables
-- ✅ Add `skills` table to `models.py` — id, user_id, name, description, is_builtin, is_active, data_sources (JSONB), reasoning_model, trigger_type, trigger_config (JSONB), output_routing, system_prompt, created_at, updated_at
-- ✅ Add `skill_executions` table to `models.py` — id, skill_id, user_id, input_context (JSONB), output_result, model_used, surface_delivered, user_action, execution_time_ms, created_at
-- ✅ Add `api_connections` table to `models.py` — id, user_id, service, access_token, refresh_token, token_expiry, is_connected, scopes (JSONB), metadata (JSONB), updated_at, UNIQUE(user_id, service)
-- ✅ Add `model_routes` table to `models.py` — id, task_type, model, reasoning, cost_per_1m_input, is_active
-- ✅ Run Neon migration — all 4 tables created via Base.metadata.create_all on startup
-- ✅ Seed built-in skills on first GET /skills call — email, calendar, finance, research, entertainment, site (6 skills)
-- ✅ `users` table — calendar_access_token, calendar_refresh_token, calendar_token_expiry, calendar_connected columns added via ALTER TABLE IF NOT EXISTS startup migration
+- ⬜ Add `skills` table to `models.py`
+  - id (UUID, primary key)
+  - user_id (UUID, foreign key → users.id)
+  - name (TEXT, not null)
+  - description (TEXT)
+  - is_builtin (BOOLEAN, default FALSE)
+  - is_active (BOOLEAN, default TRUE)
+  - data_sources (JSONB, default '[]') — e.g. ["gmail", "calendar", "spotify"]
+  - reasoning_model (TEXT, default 'claude') — claude|perplexity|grok|gemini_flash
+  - trigger_type (TEXT, default 'dispatch') — dispatch|schedule|location|manual
+  - trigger_config (JSONB, default '{}') — schedule cron, location coords etc
+  - output_routing (TEXT, default 'thread') — push|thread|widget|digest|silent
+  - system_prompt (TEXT) — the actual Claude/Perplexity/Grok system prompt for this skill
+  - created_at, updated_at
+- ⬜ Add `skill_executions` table to `models.py`
+  - id (UUID, primary key)
+  - skill_id (UUID, foreign key → skills.id)
+  - user_id (UUID, foreign key → users.id)
+  - input_context (JSONB) — full context passed to the model
+  - output_result (TEXT) — raw model response
+  - model_used (TEXT) — which model actually handled it
+  - surface_delivered (TEXT) — where output was sent
+  - user_action (TEXT) — sent|edited|dismissed|deferred|ignored
+  - execution_time_ms (INTEGER)
+  - created_at
+- ⬜ Add `api_connections` table to `models.py`
+  - id (UUID, primary key)
+  - user_id (UUID, foreign key → users.id)
+  - service (TEXT, not null) — gmail|calendar|spotify|stripe|slack|reddit|youtube|xero
+  - access_token (TEXT, encrypted at rest)
+  - refresh_token (TEXT, encrypted at rest)
+  - token_expiry (TIMESTAMP)
+  - is_connected (BOOLEAN, default FALSE)
+  - scopes (JSONB, default '[]') — list of granted OAuth scopes
+  - metadata (JSONB, default '{}') — service-specific data (e.g. Spotify user_id)
+  - updated_at
+  - UNIQUE constraint on (user_id, service)
+- ⬜ Add `model_routes` table to `models.py`
+  - id (UUID, primary key)
+  - task_type (TEXT) — email_draft|research|entertainment|triage|video_summary|reasoning|bulk
+  - model (TEXT) — claude|perplexity|grok|gemini_flash|gemini_pro|gpt5|deepseek
+  - reasoning (TEXT) — why this model for this task
+  - cost_per_1m_input (FLOAT)
+  - is_active (BOOLEAN, default TRUE)
+- ⬜ Run Neon migration — create all 4 new tables
+- ⬜ Seed `model_routes` table with routing rules on startup (in lifespan)
+- ⬜ Seed built-in skills for every new user on first login
+  - Email Intelligence — data_sources=["gmail"], reasoning_model="claude", trigger_type="dispatch", output_routing="push"
+  - Calendar Intelligence — data_sources=["calendar"], reasoning_model="claude", trigger_type="dispatch", output_routing="push"
+  - Finance Intelligence — data_sources=["stripe"], reasoning_model="claude", trigger_type="dispatch", output_routing="push"
+  - Research Intelligence — data_sources=[], reasoning_model="perplexity", trigger_type="manual", output_routing="thread"
+  - Entertainment Intelligence — data_sources=["spotify"], reasoning_model="grok", trigger_type="dispatch", output_routing="digest"
+  - Morning Brief — data_sources=["gmail","calendar","tasks"], reasoning_model="claude", trigger_type="schedule", trigger_config={"cron": "50 6 * * *"}, output_routing="push"
+- ⬜ Update `routes/auth.py` — call seed_default_skills(user_id, db) when user is created for first time
 
 ### 2.2 Model Router
-- ✅ Create `services/model_router.py` — route(), resolve_model(), _call_model()
-- ✅ `route()` returns { text, model, elapsed_ms } — single entry point for all AI calls
-- ✅ `_call_openai_compatible()` shared caller for Perplexity, Grok, OpenAI (all use chat/completions)
-- ✅ `_call_perplexity()` — sonar-pro model
-- ✅ `_call_grok()` — grok-3-fast model
-- ✅ `_call_gemini()` — gemini-2.0-flash-lite and gemini-2.0-pro
-- ✅ `_call_openai()` — gpt-4o model
-- ✅ Fallback to Claude if model API key missing or call fails
-- ✅ DEFAULT_ROUTES dict maps task_type → model (matches AXIS_INTELLIGENCE_v1.md)
-- ✅ Uses httpx (already in requirements) for async HTTP
-- ✅ Response time logged via logger.info per call
-- ⬜ Add PERPLEXITY_API_KEY to Railway Variables (when ready)
-- ⬜ Add GROK_API_KEY to Railway Variables (when ready)
-- ⬜ Add GEMINI_API_KEY to Railway Variables (when ready)
-- ⬜ Add OPENAI_API_KEY to Railway Variables (optional)
+- ⬜ Create `services/model_router.py`
+- ⬜ Implement `route_to_model(model: str, system: str, user_msg: str) -> str` — master routing function
+- ⬜ Implement `call_perplexity(system, user_msg)` — POST to `api.perplexity.ai/chat/completions`, model `llama-3.1-sonar-large-128k-online`, returns content string
+- ⬜ Implement `call_grok(system, user_msg)` — POST to `api.x.ai/v1/chat/completions`, model `grok-4.1-fast`, OpenAI-compatible format
+- ⬜ Implement `call_gemini_flash(system, user_msg)` — POST to `generativelanguage.googleapis.com`, model `gemini-2.0-flash-lite`, parse `candidates[0].content.parts[0].text`
+- ⬜ Implement `call_gemini_pro(system, user_msg)` — same endpoint, model `gemini-3.1-pro`
+- ⬜ Implement `call_gpt5(system, user_msg)` — OpenAI SDK, model `gpt-5.4-turbo`, optional
+- ⬜ Fallback to Claude if unknown model string passed
+- ⬜ Add `PERPLEXITY_API_KEY` to Railway Variables
+- ⬜ Add `GROK_API_KEY` to Railway Variables
+- ⬜ Add `GEMINI_API_KEY` to Railway Variables
+- ⬜ Add `OPENAI_API_KEY` to Railway Variables (optional, for GPT-5)
+- ⬜ All API calls use `aiohttp.ClientSession` for async HTTP
+- ⬜ Error handling — catch HTTP errors, log to agent_activity, fallback to Claude on failure
+- ⬜ Add response time logging to agent_activity for each model call
 
 ### 2.3 Triage Service
-- ✅ Create `services/triage_service.py` — triage_items(), _parse_triage()
-- ✅ Routes through model_router as task_type="triage" → Gemini Flash-Lite
-- ✅ Scores each item 1-10 against user profile (name, mode, tasks, calendar)
-- ✅ Strips markdown fences, parses JSON, merges classifications with original items
-- ✅ Safe fallback: marks all as "relevant" if parse fails (nothing silently dropped)
-- ✅ Returns { "urgent": [...], "relevant": [...], "noise": [...] }
-- ✅ Logs counts via logger.info per triage run
+- ⬜ Create `services/triage_service.py`
+- ⬜ Implement `triage_items(items: list, user_profile: dict) -> dict` — classifies all items before expensive processing
+- ⬜ Build triage prompt — asks Gemini Flash-Lite to score each item 1–10 against user profile, returns JSON array
+- ⬜ Implement `parse_triage_result(raw: str) -> list` — extracts JSON array from Gemini response, handles malformed JSON gracefully
+- ⬜ Default score for unparseable items: 3 (noise, discarded)
+- ⬜ Return structure: `{"urgent": [...], "relevant": [...], "noise": [...]}` — urgent is 7+, relevant is 4–6, noise is below 4
+- ⬜ Wire `triage_service` into `dispatch.py` — all items triaged before any Claude call
+- ⬜ Log count of discarded noise items to agent_activity per dispatch run
+- ⬜ Log count of urgent and relevant items separately
 
 ### 2.4 Signal Filter
-- ✅ Create `services/signal_filter.py` — apply_filters(), 5-layer noise reduction
-- ✅ Filter 1 — relevance: boosts score if item keywords match active tasks or user model interests
-- ✅ Filter 2 — urgency: threshold routing (7+ push, 4-6 digest, <4 silent)
-- ✅ Filter 3 — context: +1 boost if item category matches current mode (work/builder/student/founder/personal)
-- ✅ Filter 4 — deduplication: SHA256 hash of normalised text, same content silenced within session
-- ✅ Filter 5 — apprentice: 8+ dismissals of a content_type in last 14 days → score drops by 3
-- ✅ Returns { "push": [...], "digest": [...], "silent": [...] }
+- ⬜ Create `services/signal_filter.py`
+- ⬜ Implement Filter 1 — relevance check against user_model interest profile
+- ⬜ Implement Filter 2 — urgency scoring cross-check (second pass after triage)
+- ⬜ Implement Filter 3 — context check: calendar events in next 48hrs, current location, current mode
+- ⬜ Implement Filter 4 — deduplication: hash each item by source+topic+summary, check against 24hr seen-items store (Postgres or in-memory)
+- ⬜ Implement Filter 5 — apprentice filter: read user_model.defer_patterns, reduce score by 50% for topics with 8+ consecutive dismissals
+- ⬜ Create `seen_items` table or Redis key for deduplication window
+- ⬜ Wire signal_filter into orchestrator — apply after triage, before model calls
 
 ### 2.5 Gmail SEND
-- ✅ Gmail OAuth SCOPES already included gmail.send since Session 4
-- ✅ `send_email()` added to `services/gmail_service.py` — MIMEText, base64 encode, In-Reply-To/References headers for thread replies
-- ✅ `POST /gmail/send` endpoint in `routes/gmail.py` — auth required, accepts { to, subject, body, thread_id, in_reply_to }
-- ✅ Returns { status: "sent", message_id, thread_id }
-- ⬜ Create `prompts/email_draft.py` — voice-matched draft prompt (needs voice model data)
-- ⬜ Add [Send] / [Edit] / [Dismiss] action buttons to thread messages in React frontend
-- ⬜ Update dispatch to generate email drafts for urgency 8+ emails
+- ⬜ Update Gmail OAuth `SCOPES` list in `routes/gmail.py` — add `https://www.googleapis.com/auth/gmail.send`
+- ⬜ Note: users who already connected Gmail will need to re-authorise to grant send scope
+- ⬜ Create `services/gmail_send.py`
+- ⬜ Implement `send_email_draft(user, to: str, subject: str, body: str, thread_id: str = None)`
+  - Build `MIMEText` message with correct headers
+  - Set `References` and `In-Reply-To` headers when replying to thread
+  - base64 urlsafe encode the MIME message
+  - Call `gmail_service.users().messages().send(userId='me', body={'raw': raw, 'threadId': thread_id})`
+- ⬜ Create `POST /gmail/send` endpoint in `routes/gmail.py`
+  - Requires auth (Clerk JWT)
+  - Accepts `{to, subject, body, thread_id}` request body
+  - Calls `gmail_send.send_email_draft()`
+  - Logs to interactions table with action_taken="sent", surface="gmail_send"
+  - Returns `{"success": true, "message_id": "..."}`
+- ⬜ Create `prompts/email_draft.py` — voice-matched email draft prompt
+  - Injects `voice_patterns` from user_model
+  - Injects relationship_graph score and formality level for the specific recipient
+  - Injects 3 example past replies to similar emails from sent_emails_cache
+  - Injects full email thread context being replied to
+  - Specifies target word count based on voice_patterns.avg_reply_length
+  - Output: draft text only, no preamble, no explanation, no sign-off unless voice model uses one
+- ⬜ Update dispatch to generate email drafts for high-urgency emails (urgency score 8+)
+  - action_type: "draft_email" in dispatch output JSON
+  - Draft text stored in `pre_prepared_action` field
+  - Draft_id stored so frontend can reference it
+- ⬜ Add `[Send]` action button to thread messages that have `message_type="email_draft"`
+  - Calls POST /gmail/send with the draft content
+  - Shows sending spinner, then confirmation
+- ⬜ Add `[Edit]` action button — opens edit modal, user modifies draft, then sends
+- ⬜ Add `[Dismiss]` button — marks draft as dismissed, logs to interactions
 
 ### 2.6 Google Calendar OAuth
-- ✅ `routes/calendar.py` — GET /auth/calendar → consent → /auth/calendar/callback stores tokens
-- ✅ `services/calendar_service.py` — fetch_todays_events(), fetch_upcoming_events(), get_next_event(), detect_conflicts()
-- ✅ Calendar tokens stored on users table (calendar_access_token, calendar_refresh_token, calendar_token_expiry, calendar_connected)
-- ✅ GET /calendar/today — returns events + conflicts
-- ✅ GET /calendar/upcoming?hours=24 — events in next N hours
-- ✅ /me returns calendar_connected status
-- ✅ Calendar data wired into dispatch v2 context
-- ✅ /auth/calendar and /auth/calendar/callback added to PUBLIC_PATHS
-- ⬜ Add Connect Calendar button to Settings screen in React
-- ⬜ Add GOOGLE_CALENDAR_REDIRECT_URI to Railway Variables
-- ⬜ Add calendar callback as authorized redirect URI in Google Cloud Console
-- ⬜ Create `services/meeting_prep.py` — 30-min pre-meeting cron with Perplexity attendee research
+- ⬜ Add `https://www.googleapis.com/auth/calendar.readonly` and `https://www.googleapis.com/auth/calendar.events` scopes to Google Cloud project
+- ⬜ Create `routes/calendar.py`
+- ⬜ Implement `GET /auth/calendar` — redirects to Google consent URL with calendar scopes
+- ⬜ Implement `GET /auth/calendar/callback` — exchanges code, stores tokens in api_connections table with service="google_calendar"
+- ⬜ Add `calendar_connected` boolean check in `GET /me` response
+- ⬜ Add Connect Calendar button to Settings screen
+- ⬜ Create `services/calendar_service.py`
+- ⬜ Implement `fetch_upcoming_events(user, days=2)` — returns events with title, start_time, end_time, attendee_emails, attendee_names, location, description, hangout_link
+- ⬜ Implement `detect_conflicts(events: list)` — returns pairs of overlapping events
+- ⬜ Implement `calculate_travel_time(from_location, to_location)` — uses Google Maps API or hardcoded buffer if no maps key
+- ⬜ Wire calendar data into dispatch context so emails about meetings are cross-referenced
+- ⬜ Create `services/meeting_prep.py`
+  - Runs every 5 minutes via APScheduler
+  - Checks for events starting in 25–35 minutes (the 30-min pre-meeting window)
+  - For each event: fetches attendee emails, pulls recent thread messages with those people, calls Perplexity for attendee background research, calls Claude with meeting prep prompt
+  - Sends push notification with prep brief
+  - Logs to skill_executions with skill_id=calendar_intelligence_skill_id
+- ⬜ Create `prompts/meeting_prep.py`
+  - 3 bullet brief, each under 15 words
+  - One suggested talking point
+  - One risk flag if present
+  - Based on recent emails with attendees + Perplexity background — NOT generic advice
+  - Total output under 80 words
 
 ### 2.7 Skills Framework (replaces monolithic dispatch)
-- ✅ `routes/skills.py` rewritten — GET /skills, POST /skills, PATCH /skills/{id}, DELETE /skills/{id}, POST /skills/{id}/run, POST /skills/{id}/chat (legacy compat)
-- ✅ `services/skill_engine.py` — execute_skill(), seed_builtin_skills(), run_dispatch_skills()
-- ✅ execute_skill() injects user context into system prompt, routes to configured model, logs to skill_executions
-- ✅ 6 built-in skills seeded on first GET /skills: email (Claude), calendar (Claude), finance (Claude), research (Perplexity), entertainment (Grok), site (Claude)
-- ✅ run_dispatch_skills() loops all dispatch-triggered active skills for a user
-- ✅ `prompts/dispatch_v2.py` — skills-aware prompt with model_to_use + skill_name per item
-- ✅ `services/dispatch.py` rewritten — uses dispatch_v2, pulls calendar + gmail, assembles user model + skills context, calls run_dispatch_skills() after classification
-- ✅ Dispatch triggers for any connected user (gmail OR calendar)
-- ✅ Dispatch strips markdown fences before JSON parse
+- ⬜ Create `routes/skills.py`
+  - GET /skills — returns all active skills for authenticated user (builtin + custom)
+  - POST /skills — creates a new custom skill (Pro users only)
+  - GET /skills/:id — returns single skill detail
+  - PATCH /skills/:id — update skill config (name, description, data_sources, reasoning_model, trigger_type, output_routing, system_prompt)
+  - DELETE /skills/:id — delete custom skill (cannot delete builtin skills)
+  - POST /skills/:id/run — manually trigger a skill, returns result to thread
+- ⬜ Create `services/orchestrator.py`
+  - `run_active_skills(user, context, db)` — fetches active skills for user, runs all in parallel via asyncio.gather
+  - `run_skill(skill, context)` — filters context to data sources needed by skill, builds skill prompt, calls model_router, parses result
+  - `filter_context_for_skill(skill, context)` — returns only the context data the skill's data_sources require (Gmail data for email skill, calendar data for calendar skill etc)
+  - `build_skill_prompt(skill, relevant_data)` — combines skill.system_prompt with relevant context data
+  - `parse_skill_result(raw_result, skill)` — extracts structured routing decision from model response
+- ⬜ Create `services/context_assembler.py`
+  - `assemble_context(user, new_data, db)` — builds complete context object
+  - Includes: user.name, user.mode, user.timezone, current_time_local
+  - Includes: new_data (Gmail, calendar, Stripe, Spotify etc)
+  - Includes: user_model (voice_patterns, relationship_graph, productive_windows, defer_patterns)
+  - Includes: recent_thread (last 10 messages from thread_messages table)
+  - Includes: health_snapshot (sleep_hrs, sleep_quality, hrv — from last POST /health/snapshot)
+  - Includes: today_events (next 24hrs from calendar)
+  - Returns as single Python dict
+- ⬜ Create `services/output_router.py`
+  - `route_result(result_items: list, user, db)` — reads surface field per item, dispatches correctly
+  - surface="push" → `push_service.send_push(user.apns_token, title, body, actions)`
+  - surface="thread" → `save_thread_message(user.id, content, role="assistant", message_type=item.type, db)`
+  - surface="widget" → update widget cache in Postgres/Redis
+  - surface="digest" → append to today's digest queue
+  - surface="silent" → log to interactions only, nothing shown to user
+  - action_type="send_email" → call `gmail_send.send_email_draft()` immediately (auto-send) or set action_available=True on push (user approves)
+  - action_type="create_event" → call calendar_service.create_event() (future)
+  - All routes log to interactions table regardless of surface
+- ⬜ Create `prompts/dispatch_v2.py` — skills-aware dispatch prompt
+  - Injects user.mode, location, local_time, health context (sleep, HRV)
+  - Injects user_model summary (voice, top contacts, productive windows, defer patterns)
+  - Injects list of active skill names and their configs
+  - Injects new_data structured by source
+  - Returns JSON array — one object per actionable item with: urgency (1–10), actionable (bool), surface (push|thread|widget|digest|silent), action_type (send_reply|create_task|send_invoice_reminder|research|none), pre_prepared_action (draft text or task text), model_to_use (claude|perplexity|grok), skill_id (which skill this belongs to), reason (one sentence)
+- ⬜ Refactor `services/dispatch.py` — replace monolithic Claude call with orchestrator.run_active_skills()
+- ⬜ Wire orchestrator into APScheduler 15-minute job
 
 ### 2.8 Perplexity Integration
-- ✅ `services/perplexity_service.py` — research(), person_lookup(), news_briefing()
-- ✅ All route through model_router as task_type=research/person_lookup/news → Perplexity sonar-pro
-- ✅ Falls back to Claude if PERPLEXITY_API_KEY not set
-- ✅ Research skill built-in wired to use perplexity via reasoning_model="perplexity"
-- ⬜ Wire meeting prep to use person_lookup() for attendee background
+- ⬜ Create `services/perplexity_service.py`
+- ⬜ Implement `research(query: str, user_context: dict) -> str` — posts to Perplexity sonar-pro, contextualises to user's mode and location, returns synthesis with citations
+- ⬜ Implement `research_person(name: str, company: str) -> str` — structured person/company background lookup for meeting prep
+- ⬜ Create `prompts/research.py` — Perplexity system prompt
+  - Contextualises to user's mode, location, active projects
+  - Returns actionable summary not raw facts
+  - Includes citations inline
+  - Under 200 words unless user asked for deep research
+- ⬜ Wire Research Intelligence skill to use perplexity_service via model_router
+- ⬜ Wire meeting prep to use research_person() for attendee background
 
 ### 2.9 Grok Integration
-- ✅ `services/grok_service.py` — entertainment_digest(), social_trends(), sports_update()
-- ✅ All route through model_router as task_type=entertainment/social_trends/sports → Grok grok-3-fast
-- ✅ Falls back to Claude if GROK_API_KEY not set
-- ✅ Entertainment skill built-in wired to use grok via reasoning_model="grok"
+- ⬜ Create `services/grok_service.py`
+- ⬜ Implement `entertainment_brief(user_taste: dict) -> str` — calls Grok API with user's music/social interest profile, returns top 3 entertainment items worth surfacing today
+- ⬜ Implement `social_trends(topics: list) -> str` — gets X/Twitter sentiment and trending content on user's followed topics
+- ⬜ Implement `breaking_news(interests: list) -> str` — surfaces breaking news relevant to user's interest profile
+- ⬜ Wire Entertainment Intelligence skill to use grok_service via model_router
 - ⬜ Include Grok entertainment brief in morning digest assembly
 
 ### 2.10 Apprentice — Weekly Improvement
-- ✅ `services/apprentice.py` — run_improvement_cycle(), rebuild_voice_model(), run_all_improvement(), run_all_voice_rebuild()
-- ✅ Improvement cycle: pulls 7 days of interactions grouped by surface/content_type/action, sends to Claude with existing user_model, updates productive_windows/completion_rates/notif_response_rates/defer_patterns
-- ✅ Voice model rebuild: reads last 50 sent emails from sent_emails_cache, Claude extracts voice patterns (avg_word_count, formality_by_type, sign_offs, openers, sentence_style, tone), updates user_model.voice_patterns
-- ✅ Both strip markdown fences from Claude response before JSON parse
-- ✅ APScheduler wired in main.py: Sunday 3AM UTC improvement, Sunday 4AM UTC voice rebuild
-- ✅ Improvement runs for all Pro users, voice rebuild for Pro + gmail_connected users
-- ⬜ Sunday 5AM UTC: collective patterns update (anonymised cross-user)
+- ⬜ Create `services/apprentice.py`
+- ⬜ Implement `run_improvement_cycle(user, db)` — full weekly learning loop
+  - Pulls all interactions from last 7 days for this user
+  - Computes `accuracy_by_skill` — for each skill, what % of push notifications did user act on vs dismiss
+  - Computes `response_times_by_hour` — when does user respond fastest (identifies productive windows)
+  - Computes `most_deferred_categories` — what types of tasks are consistently put off
+  - Pulls last 20 sent emails from sent_emails_cache
+  - Calls Claude with apprentice prompt + all data
+  - Saves updated user_model back to database
+- ⬜ Create `prompts/apprentice.py` — user model update prompt
+  - Analyses week data with evidence, not generalisations
+  - Identifies specific changes to voice_patterns (new phrases observed, formality shifts)
+  - Updates relationship_graph scores based on response behaviours
+  - Updates productive_windows based on interaction timing
+  - Updates defer_patterns based on dismissal patterns
+  - Returns full updated user_model JSON
+  - Also returns plain-English explanation of what changed (for Apprentice dashboard)
+- ⬜ Create `services/voice_model.py`
+- ⬜ Implement `rebuild_voice_model(user, db)` — Sunday 4AM job
+  - Fetches last 50 sent emails from Gmail API (not cache) — most recent real sent mail
+  - Groups emails by recipient type (client, supplier, friend, colleague) using relationship_graph
+  - Analyses per group: avg sentence length, formality score 1–10, common opening phrases, common closing phrases, sign-off style, emoji usage, punctuation style
+  - Calls Claude to synthesise patterns into voice_patterns JSON structure
+  - Updates user_model.voice_patterns in database
+- ⬜ Wire apprentice and voice model jobs into APScheduler in `main.py`
+  - Sunday 3AM UTC: improvement cycle for all Pro users
+  - Sunday 4AM UTC: voice model rebuild for all Pro users with Gmail connected
+  - Sunday 5AM UTC: collective patterns update (anonymised cross-user)
 
 ---
 
 ## PART 3 — SESSION 7 (Entertainment + lifestyle layer)
 
 ### 3.1 YouTube Integration
-- ✅ Create `services/youtube_service.py` — fetch_subscription_videos(), fetch_trending_videos(), summarise_video() (Gemini via model_router)
+- ⬜ Create `services/youtube_service.py`
 - ⬜ Enable YouTube Data API v3 in Google Cloud project
 - ⬜ Implement `get_new_videos(user, hours=24) -> list` — OAuth, fetches videos from subscribed channels uploaded in last 24hrs, returns id + title + description + duration_seconds + channel_name + published_at
 - ⬜ Implement `get_subscription_list(user) -> list` — returns user's YouTube channel subscriptions
@@ -271,7 +413,7 @@ Legend: ✅ Done · ⬜ Not started · 🔄 In progress · 🚫 Blocked (needs p
 
 ### 3.3 Reddit Integration
 - ⬜ Create Reddit app at reddit.com/prefs/apps
-- ✅ Create `services/reddit_service.py` — fetch_subreddit_posts(), fetch_multiple_subreddits(), search_reddit() (app-only OAuth token)
+- ⬜ Create `services/reddit_service.py`
 - ⬜ Implement `get_community_posts(user, min_score=100, hours=24) -> list` — OAuth, fetches top posts from user's subscribed subreddits, filtered to communities user actually posts/comments in
 - ⬜ Implement `get_subscribed_communities(user) -> list` — returns all subscribed subreddits
 - ⬜ Implement `get_engagement_history(user) -> dict` — maps subreddit → number of posts/comments user has made (determines which subs are active vs lurk-only)
@@ -284,7 +426,7 @@ Legend: ✅ Done · ⬜ Not started · 🔄 In progress · 🚫 Blocked (needs p
 - ⬜ Wire Reddit into entertainment/knowledge brief based on user mode (Builder mode surfaces construction subreddits, Founder mode surfaces startup subreddits)
 
 ### 3.4 Hacker News Integration
-- ✅ Hacker News integrated in `services/news_service.py` — fetch_hacker_news() uses free Firebase API
+- ⬜ Create `services/hackernews_service.py`
 - ⬜ Implement `get_top_stories(min_score=200, limit=10) -> list` — no auth needed, uses HN Algolia API (`hn.algolia.com/api/v1/search`)
 - ⬜ Implement `get_ask_hn(limit=5) -> list` — Ask HN posts relevant to founder/builder modes
 - ⬜ Implement `filter_by_mode(stories: list, user_mode: str) -> list` — Builder/Founder see startup + tech + tools. Student sees learning resources. Work mode sees industry news.
@@ -300,7 +442,8 @@ Legend: ✅ Done · ⬜ Not started · 🔄 In progress · 🚫 Blocked (needs p
 - ⬜ Add PH as optional data source in Morning Brief skill
 
 ### 3.6 News Aggregation
-- ✅ `services/news_service.py` — fetch_google_news() (RSS, no key), fetch_hacker_news() (free API), fetch_news_for_topics(), fetch_rss_feed() (generic RSS/Atom)
+- ⬜ Get Google News API key
+- ⬜ Create `services/news_service.py`
 - ⬜ Implement `get_relevant_news(user, topics: list) -> list` — Google News API, filtered by user's topics of interest, last 24hrs, returns title + source + url + snippet
 - ⬜ Implement `get_industry_news(industry: str) -> list` — news relevant to user's detected industry (from mode + email content analysis)
 - ⬜ Build topic interest profile from interactions — what news stories user has clicked → extract topics → weight future news higher from those topics
@@ -721,3 +864,114 @@ Legend: ✅ Done · ⬜ Not started · 🔄 In progress · 🚫 Blocked (needs p
 *Update this checklist at the end of every session.*
 
 **END OF AXIS BUILD CHECKLIST v1**
+
+---
+
+## PART 7 — SESSION 7 ADDITIONS (from expanded vision)
+
+### 7.1 Smart Notes
+- ⬜ Add notes table to models.py (id, user_id, content, tags[], source, context_snapshot, created_at)
+- ⬜ GIN index on content for full-text search
+- ⬜ Run Neon migration for notes table
+- ⬜ Create services/notes_service.py — save_note(), search_notes(), get_related_notes()
+- ⬜ Create routes/notes.py — POST /notes, GET /notes, GET /notes/search?q=
+- ⬜ Register notes router in main.py
+- ⬜ Update prompts/thread_system.py to detect: "remember [x]", "note that [x]", "what do I know about [x]"
+- ⬜ Wire notes into context_assembler.py — inject last 7 days of notes into dispatch context
+- ⬜ Wire notes into meeting prep — surface notes about attendees
+- ⬜ Wire notes into morning brief — surface notes relevant to today's calendar
+
+### 7.2 Context Notes
+- ⬜ ALTER TABLE users ADD COLUMN IF NOT EXISTS context_notes TEXT
+- ⬜ PATCH /me accepts context_notes field
+- ⬜ context_assembler.py injects context_notes at TOP of every Claude call
+- ⬜ Settings.jsx — "What Axis should always know" textarea with autosave
+
+### 7.3 [Send] Button on Email Drafts
+- ⬜ Thread.jsx — detect message_type="email_draft" or "Draft reply ready:" in content
+- ⬜ Render [Send] [Edit] [Dismiss] action buttons below draft messages
+- ⬜ sendDraft() function — calls POST /gmail/send with extracted draft
+- ⬜ editDraft() — opens edit modal, user modifies, then sends
+- ⬜ dismissDraft() — logs to interactions, removes buttons
+- ⬜ Show "Sent ✓" confirmation inline after send
+
+### 7.4 Status Intelligence
+- ⬜ Create services/status_service.py — get_status(user_id, topic, db)
+- ⬜ Semantic search across emails, tasks, notes, invoices, calendar for topic
+- ⬜ Create prompts/status.py — specific, dated, actionable briefing under 150 words
+- ⬜ Thread command detection: "status of [x]", "update on [x]", "where are we with [x]"
+- ⬜ daily_situation_briefing() — "what's on my plate today" full synthesis
+
+### 7.5 Fix User Name from Clerk
+- ⬜ routes/auth.py — extract first_name from JWT claims on upsert
+- ⬜ Save to users.name if currently null
+- ⬜ Every prompt uses real name immediately
+
+### 7.6 Voice Input on Web
+- ⬜ Thread.jsx — mic button next to send using webkitSpeechRecognition
+- ⬜ BrainDump.jsx — mic button on textarea
+- ⬜ Visual indicator: pulsing dot while recording
+- ⬜ lang set to 'en-AU' default
+
+### 7.7 Watch Service
+- ⬜ Add watches table (id, user_id, topic, watch_type, last_checked_at, last_result, threshold, is_active)
+- ⬜ Create services/watch_service.py — create_watch(), run_all_watches()
+- ⬜ Hourly cron in APScheduler
+- ⬜ Thread commands: "watch [x]", "monitor [x]", "let me know if [x] changes", "stop watching [x]"
+- ⬜ Perplexity for news watches, Gmail scan for person watches
+
+### 7.8 Follow-Up Tracker
+- ⬜ Add follow_ups table (id, user_id, email_id, to_email, subject, sent_at, follow_up_due, is_done)
+- ⬜ Create services/followup_service.py — scan_for_missing_replies()
+- ⬜ Wire into dispatch job — runs every 15 min
+- ⬜ Surface no-reply emails as urgency 6 push with draft follow-up
+
+### 7.9 Weekly Retrospective Email
+- ⬜ Add RESEND_API_KEY to Railway
+- ⬜ Add weekly_retrospectives table
+- ⬜ Create services/retrospective_service.py
+- ⬜ Create prompts/retrospective.py — warm, personal, specific, under 200 words
+- ⬜ Sunday 6PM cron wired in APScheduler
+- ⬜ Sends to user.email via Resend
+
+### 7.10 PWA Manifest
+- ⬜ axis-web/public/manifest.json
+- ⬜ axis-web/public/icon-192.png + icon-512.png
+- ⬜ index.html — apple-mobile-web-app meta tags
+- ⬜ Add to Home Screen prompt after 3rd session
+
+### 7.11 Proactive Skill Suggestions
+- ⬜ Add skill_suggestions table
+- ⬜ Create services/suggestion_service.py — detect_patterns()
+- ⬜ Wire into Sunday apprentice cycle
+- ⬜ Thread message: "I noticed X. Want me to automate it? [Create skill] [Not now] [Never]"
+
+### 7.12 Stripe Finance Intelligence (user's own Stripe)
+- ⬜ Stripe Connect OAuth — GET /auth/stripe-connect + callback
+- ⬜ Create services/stripe_service.py — get_overdue_invoices(), get_cash_flow_summary()
+- ⬜ Invoice chasing wired into dispatch
+- ⬜ Cash flow in morning brief
+
+### 7.13 Weather + Travel Time
+- ⬜ Add OPENWEATHER_API_KEY to Railway (free)
+- ⬜ Create services/weather_service.py
+- ⬜ For each calendar event with location: weather forecast + drive time
+- ⬜ Add to morning brief: "Site visit 8AM. 14°C raining. Leave by 7:20."
+- ⬜ User sets home location in Settings
+
+### 7.14 Multi-Turn Task Execution
+- ⬜ Update thread_system.py to detect multi-step intent
+- ⬜ State machine: intent → gather info → confirm → execute
+- ⬜ MANDATORY confirmation step before any send/create
+- ⬜ "Set up a meeting with Marcus next week" → full flow end to end
+
+### 7.15 Risk + Opportunity Detection
+- ⬜ Extend dispatch v3 with risk scanning pass
+- ⬜ Detect: quote expiry, silent important contacts, calendar conflicts, invoice thresholds
+- ⬜ Surface as urgency 8 push with context
+
+### 7.16 Relationship Health
+- ⬜ Add last_interaction_at to relationship_graph
+- ⬜ Weekly scan for important contacts silent 21+ days
+- ⬜ Surface in morning digest with check-in draft
+
