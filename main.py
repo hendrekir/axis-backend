@@ -23,6 +23,7 @@ from routes.calendar import router as calendar_router
 from routes.spotify import router as spotify_router
 from routes.apprentice import router as apprentice_router
 from routes.notes import router as notes_router
+from routes.tts import router as tts_router
 from routes.cron import router as cron_router
 from routes.me import router as me_router
 from routes.billing import router as billing_router
@@ -260,6 +261,7 @@ app.include_router(calendar_router, tags=["Calendar"])
 app.include_router(spotify_router, tags=["Spotify"])
 app.include_router(apprentice_router, tags=["Apprentice"])
 app.include_router(notes_router, tags=["Notes"])
+app.include_router(tts_router, tags=["TTS"])
 app.include_router(cron_router, tags=["Cron"])
 app.include_router(me_router, tags=["User"])
 app.include_router(billing_router, tags=["Billing"])
