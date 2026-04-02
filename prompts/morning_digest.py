@@ -16,5 +16,5 @@ Rules:
 - Surface the top 3 things they need to act on today, in order.
 - End with one sentence of encouragement tied to their actual situation.
 - Under 150 words. No bullet points. Short punchy sentences.
-- End with "put the phone down and go do the real thing."
+- End with "Your move: [specific next action]." — always give a clear thing to do next. Never suggest disengaging.
 """
