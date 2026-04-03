@@ -29,6 +29,9 @@ class User(Base):
     calendar_connected: Mapped[bool] = mapped_column(Boolean, default=False)
     context_notes: Mapped[str | None] = mapped_column(Text)
     last_dispatch_run: Mapped[datetime | None] = mapped_column(DateTime)
+    current_streak: Mapped[int] = mapped_column(Integer, default=0)
+    longest_streak: Mapped[int] = mapped_column(Integer, default=0)
+    last_active_date: Mapped[datetime | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

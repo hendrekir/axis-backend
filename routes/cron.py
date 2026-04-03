@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from services.dispatch import run_dispatch
 from services.morning_digest import run_morning_digest
+from services.streak_service import run_streak_reminders
 
 router = APIRouter(tags=["Cron"])
 
@@ -34,6 +35,14 @@ async def digest_cron(secret: str = "", db: AsyncSession = Depends(get_db)):
     _verify_cron_secret(secret)
     results = await run_morning_digest(db)
     return {"status": "ok", "results": results}
+
+
+@router.post("/cron/streak-reminder")
+async def streak_reminder_cron(secret: str = "", db: AsyncSession = Depends(get_db)):
+    """Daily 9AM AEST re-engagement push. Called by Railway cron."""
+    _verify_cron_secret(secret)
+    count = await run_streak_reminders(db)
+    return {"status": "ok", "users_reminded": count}
 
 
 @router.post("/dispatch/run")

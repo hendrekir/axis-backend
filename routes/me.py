@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import ApiConnection, User
 from routes.auth import get_authenticated_user
+from services.streak_service import touch_streak
 
 router = APIRouter(tags=["User"])
 
@@ -52,7 +53,29 @@ async def get_me(
         "calendar_connected": user.calendar_connected,
         "spotify_connected": await _is_spotify_connected(user.id, db),
         "context_notes": user.context_notes or "",
+        "current_streak": user.current_streak or 0,
+        "longest_streak": user.longest_streak or 0,
+        "last_active_date": str(user.last_active_date) if user.last_active_date else None,
     }
+
+
+@router.get("/me/streak")
+async def get_streak(
+    user: User = Depends(get_authenticated_user),
+):
+    return {
+        "current_streak": user.current_streak or 0,
+        "longest_streak": user.longest_streak or 0,
+        "last_active_date": str(user.last_active_date) if user.last_active_date else None,
+    }
+
+
+@router.post("/me/streak/touch")
+async def streak_touch(
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await touch_streak(user.id, db)
 
 
 @router.patch("/me")
