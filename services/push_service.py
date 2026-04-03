@@ -1,10 +1,16 @@
 import json
+import logging
 import os
 import time
 import base64
 
 import httpx
 import jwt
+from pywebpush import webpush, WebPushException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger("axis.push")
 
 APNS_KEY_ID = os.getenv("APNS_KEY_ID", "")
 APNS_TEAM_ID = os.getenv("APNS_TEAM_ID", "")
@@ -63,3 +69,37 @@ async def send_push(device_token: str, title: str, body: str, data: dict | None 
             content=json.dumps(payload),
         )
         return resp.status_code == 200
+
+
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_CLAIMS = {"sub": "mailto:hello@dreyco.com.au"}
+
+
+async def send_web_push(user_id, title: str, body: str, url: str = "/situation", db: AsyncSession = None):
+    """Send web push notification to all subscriptions for a user."""
+    if not VAPID_PRIVATE_KEY or not db:
+        return
+
+    from models import PushSubscription
+
+    result = await db.execute(
+        select(PushSubscription).where(PushSubscription.user_id == user_id)
+    )
+    subscriptions = result.scalars().all()
+
+    payload = json.dumps({"title": title, "body": body, "url": url})
+
+    for sub in subscriptions:
+        try:
+            webpush(
+                subscription_info={"endpoint": sub.endpoint, "keys": sub.keys},
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims=VAPID_CLAIMS,
+            )
+        except WebPushException as e:
+            logger.warning("Web push failed for %s: %s", sub.endpoint[:50], e)
+            if "410" in str(e) or "404" in str(e):
+                await db.delete(sub)
+                await db.commit()
