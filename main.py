@@ -30,6 +30,7 @@ from routes.billing import router as billing_router
 from routes.schedule import router as schedule_router
 from routes.quick_capture import router as quick_capture_router
 from routes.insights import router as insights_router
+from routes.journal import router as journal_router
 from services.dispatch import run_dispatch
 from services.morning_digest import run_morning_digest
 from services.apprentice import run_all_improvement, run_all_voice_rebuild
@@ -42,7 +43,7 @@ load_dotenv()
 logger = logging.getLogger("axis.scheduler")
 
 # Public routes that skip auth
-PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/auth/calendar", "/auth/calendar/callback", "/auth/spotify", "/auth/spotify/callback", "/cron/dispatch", "/cron/digest", "/cron/streak-reminder"}
+PUBLIC_PATHS = {"/", "/health", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/auth/calendar", "/auth/calendar/callback", "/auth/spotify", "/auth/spotify/callback", "/cron/dispatch", "/cron/digest", "/cron/streak-reminder", "/cron/journal-prompt"}
 
 
 async def _scheduled_dispatch():
@@ -189,6 +190,19 @@ async def lifespan(app: FastAPI):
                 accepted BOOLEAN DEFAULT FALSE,
                 dismissed BOOLEAN DEFAULT FALSE
             )""",
+            # Journal entries table (Session 11)
+            """CREATE TABLE IF NOT EXISTS journal_entries (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                date DATE NOT NULL,
+                extracted_people JSONB,
+                extracted_projects JSONB,
+                extracted_emotions JSONB,
+                extracted_context TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )""",
         ]
         for sql in migrations:
             await conn.execute(text(sql))
@@ -274,6 +288,7 @@ app.include_router(billing_router, tags=["Billing"])
 app.include_router(schedule_router, tags=["Schedule"])
 app.include_router(quick_capture_router, tags=["Quick Capture"])
 app.include_router(insights_router, tags=["Insights"])
+app.include_router(journal_router, tags=["Journal"])
 
 
 @app.get("/")

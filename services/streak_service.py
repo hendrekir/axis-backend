@@ -49,8 +49,17 @@ async def run_streak_reminders(db: AsyncSession) -> int:
     count = 0
     for user in users:
         streak = user.current_streak or 0
-        body = f"Your Axis streak is at risk. Signals are waiting." if streak > 1 else "You have signals waiting. Open Axis."
-        await send_web_push(user.id, "Axis", body, url="/situation", db=db)
+        days_inactive = (today - user.last_active_date).days if user.last_active_date else 99
+        if days_inactive >= 2:
+            body = "Axis is working with less context. One question takes 30 seconds."
+            url = "/mind"
+        elif streak > 1:
+            body = "Your Axis streak is at risk. Signals are waiting."
+            url = "/situation"
+        else:
+            body = "You have signals waiting. Open Axis."
+            url = "/situation"
+        await send_web_push(user.id, "Axis", body, url=url, db=db)
         count += 1
 
     return count

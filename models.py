@@ -304,6 +304,21 @@ class ModelRoute(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class JournalEntry(Base):
+    __tablename__ = "journal_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer: Mapped[str] = mapped_column(Text, nullable=False)
+    date: Mapped[datetime] = mapped_column(Date, nullable=False)
+    extracted_people: Mapped[dict | None] = mapped_column(JSON)
+    extracted_projects: Mapped[dict | None] = mapped_column(JSON)
+    extracted_emotions: Mapped[dict | None] = mapped_column(JSON)
+    extracted_context: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
     __table_args__ = (UniqueConstraint("user_id", "endpoint"),)
