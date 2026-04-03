@@ -15,7 +15,7 @@ from models import User
 
 logger = logging.getLogger("axis.calendar")
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
 def _get_credentials(user: User) -> Credentials | None:
@@ -152,3 +152,31 @@ def _format_event(event: dict) -> dict:
         "meet_link": event.get("hangoutLink", ""),
         "is_all_day": "date" in start and "dateTime" not in start,
     }
+
+
+async def create_calendar_event(
+    user: User,
+    db: AsyncSession,
+    summary: str,
+    start: datetime,
+    end: datetime,
+    attendee: str | None = None,
+) -> str | None:
+    """Create a Google Calendar event. Returns event ID or None."""
+    creds = await refresh_if_needed(user, db)
+    if creds is None:
+        raise ValueError("Google Calendar not connected")
+
+    service = build("calendar", "v3", credentials=creds)
+
+    event_body = {
+        "summary": summary,
+        "start": {"dateTime": start.isoformat(), "timeZone": user.timezone or "Australia/Brisbane"},
+        "end": {"dateTime": end.isoformat(), "timeZone": user.timezone or "Australia/Brisbane"},
+    }
+
+    if attendee:
+        event_body["attendees"] = [{"email": attendee}] if "@" in attendee else []
+
+    result = service.events().insert(calendarId="primary", body=event_body).execute()
+    return result.get("id")

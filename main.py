@@ -27,6 +27,7 @@ from routes.tts import router as tts_router
 from routes.cron import router as cron_router
 from routes.me import router as me_router
 from routes.billing import router as billing_router
+from routes.schedule import router as schedule_router
 from services.dispatch import run_dispatch
 from services.morning_digest import run_morning_digest
 from services.apprentice import run_all_improvement, run_all_voice_rebuild
@@ -265,6 +266,7 @@ app.include_router(tts_router, tags=["TTS"])
 app.include_router(cron_router, tags=["Cron"])
 app.include_router(me_router, tags=["User"])
 app.include_router(billing_router, tags=["Billing"])
+app.include_router(schedule_router, tags=["Schedule"])
 
 
 @app.get("/")
