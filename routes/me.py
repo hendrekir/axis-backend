@@ -24,6 +24,7 @@ class ModeEnum(str, Enum):
 class UpdateMeRequest(BaseModel):
     mode: ModeEnum | None = None
     context_notes: str | None = None
+    timezone: str | None = None
 
 
 async def _is_spotify_connected(user_id, db: AsyncSession) -> bool:
@@ -89,6 +90,8 @@ async def update_me(
         user.mode = body.mode.value
     if body.context_notes is not None:
         user.context_notes = body.context_notes
+    if body.timezone is not None:
+        user.timezone = body.timezone
     db.add(user)
     await db.commit()
     await db.refresh(user)

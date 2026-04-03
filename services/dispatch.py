@@ -408,12 +408,20 @@ async def run_dispatch(db: AsyncSession) -> list[dict]:
 
     if not users:
         logger.info("No connected users found")
-        return []
 
     all_stats = []
     for user in users:
         logger.info("Dispatching for %s (%s)", user.name, user.id)
         stats = await dispatch_user(user, db)
         all_stats.append(stats)
+
+    # Piggyback time-based notifications onto the 15-min dispatch cycle.
+    # Each function checks per-user local time internally.
+    try:
+        from services.notification_service import send_journal_prompts, send_streak_reminders
+        await send_journal_prompts(db)
+        await send_streak_reminders(db)
+    except Exception as e:
+        logger.warning("Notification cycle failed: %s", e)
 
     return all_stats
