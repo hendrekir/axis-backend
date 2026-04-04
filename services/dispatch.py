@@ -32,6 +32,36 @@ from services.followup_service import scan_for_missing_replies
 
 logger = logging.getLogger("axis.dispatch")
 
+# Patterns that indicate internal/debug content that should never reach the thread
+_INTERNAL_PATTERNS = re.compile(
+    r"(triage[_ ]?score|urgency[_ ]?score|surface[_ ]?routing|model_to_use|action_type"
+    r"|appropriate for|morning digest|noise[_ ]?filtered)",
+    re.IGNORECASE,
+)
+
+
+def _sanitize_content(text: str) -> str:
+    """Strip lines containing internal classification language."""
+    lines = text.split("\n")
+    clean = [ln for ln in lines if not _INTERNAL_PATTERNS.search(ln)]
+    return "\n".join(clean).strip()
+
+
+def format_signal_for_thread(item: dict) -> str:
+    """Build human-facing thread content from a dispatch item."""
+    title = (
+        item.get("title")
+        or item.get("action")
+        or item.get("summary")
+        or "New signal"
+    )
+    action = item.get("pre_prepared_action", "")
+    if action and action.strip():
+        raw = f"{title}\n\n{action}"
+    else:
+        raw = title
+    return _sanitize_content(raw)
+
 
 async def _build_context(user: User, db: AsyncSession) -> dict:
     """Assemble the full context window for a single user."""
@@ -112,15 +142,11 @@ async def _build_context(user: User, db: AsyncSession) -> dict:
 async def _route_item(item: dict, user: User, db: AsyncSession):
     """Route a single dispatch item to the correct surface."""
     surface = item.get("surface", "silent")
-    action_type = item.get("action_type", "none")
-    urgency = item.get("urgency", 1)
-    reason = item.get("reason", "")
-    prepared = item.get("pre_prepared_action", "")
     source = item.get("source", "unknown")
 
     # --- Silent: log only, don't surface ---
     if surface == "silent":
-        logger.debug("Silent: %s — %s", item.get("summary", ""), reason)
+        logger.debug("Silent: %s — %s", item.get("summary", ""), item.get("reason", ""))
         db.add(Interaction(
             user_id=user.id,
             surface="silent",
@@ -132,12 +158,7 @@ async def _route_item(item: dict, user: User, db: AsyncSession):
         return
 
     # --- Thread message for push / thread / widget / digest ---
-    # Only user-facing content — never expose internal classification fields
-    item_title = item.get("title", "New item")
-    if prepared:
-        content = f"{item_title}\n\n{prepared}"
-    else:
-        content = item_title
+    content = format_signal_for_thread(item)
 
     msg = ThreadMessage(
         user_id=user.id,
@@ -150,10 +171,10 @@ async def _route_item(item: dict, user: User, db: AsyncSession):
 
     # --- Push notification ---
     if surface == "push" and user.apns_token:
-        title = item_title[:60]
-        body = prepared[:100] if prepared else ""
-        await send_push(user.apns_token, title, body, data={
-            "action_type": action_type,
+        push_title = (item.get("title") or item.get("action") or item.get("summary") or "New signal")[:60]
+        body = (item.get("pre_prepared_action") or "")[:100]
+        await send_push(user.apns_token, push_title, body, data={
+            "action_type": item.get("action_type", "none"),
             "item_id": item.get("item_id", ""),
             "skill": item.get("skill_name", ""),
         })
