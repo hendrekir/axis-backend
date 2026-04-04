@@ -132,14 +132,12 @@ async def _route_item(item: dict, user: User, db: AsyncSession):
         return
 
     # --- Thread message for push / thread / widget / digest ---
-    summary = item.get("summary", item.get("subject", "New item"))
-    content = f"**{summary}**\n{reason}"
-    if prepared and action_type == "send_reply":
-        content += f"\n\nDraft reply ready:\n{prepared}"
-    elif prepared and action_type == "create_task":
-        content += f"\n\nSuggested task: {prepared}"
-    elif prepared:
-        content += f"\n\n{prepared}"
+    # Only user-facing content — never expose internal classification fields
+    item_title = item.get("title", "New item")
+    if prepared:
+        content = f"{item_title}\n\n{prepared}"
+    else:
+        content = item_title
 
     msg = ThreadMessage(
         user_id=user.id,
@@ -152,8 +150,8 @@ async def _route_item(item: dict, user: User, db: AsyncSession):
 
     # --- Push notification ---
     if surface == "push" and user.apns_token:
-        title = f"[{urgency}/10] {summary[:60]}"
-        body = reason[:100]
+        title = item_title[:60]
+        body = prepared[:100] if prepared else ""
         await send_push(user.apns_token, title, body, data={
             "action_type": action_type,
             "item_id": item.get("item_id", ""),

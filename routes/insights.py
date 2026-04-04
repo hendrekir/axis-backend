@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
@@ -45,17 +45,21 @@ async def get_insights(
         rate = round(done_tasks / total_tasks * 100)
         insights.append(f"Task completion rate this week: {rate}% ({done_tasks}/{total_tasks})")
 
-    # Brain dump usage
+    # Capture usage — broad match across surface/content_type patterns
     result = await db.execute(
         select(func.count()).where(
             Interaction.user_id == user.id,
-            Interaction.content_type == "brain_dump",
             Interaction.created_at >= week_ago,
+            or_(
+                Interaction.surface.ilike("%brain%"),
+                Interaction.surface.ilike("%capture%"),
+                Interaction.content_type.ilike("%thread%"),
+            ),
         )
     )
-    dumps = result.scalar() or 0
-    if dumps > 0:
-        insights.append(f"You ran {dumps} brain dump{'s' if dumps != 1 else ''} this week.")
+    captures = result.scalar() or 0
+    if captures > 0:
+        insights.append(f"You ran {captures} capture{'s' if captures != 1 else ''} this week.")
 
     # Streak context
     if user.current_streak and user.current_streak >= 3:
