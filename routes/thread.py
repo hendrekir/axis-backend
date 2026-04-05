@@ -172,12 +172,19 @@ async def send_message(
     return {
         "user_message": {
             "id": str(user_msg.id),
+            "role": user_msg.role,
             "content": user_msg.content,
+            "message_type": user_msg.message_type,
+            "source_skill": user_msg.source_skill,
+            "created_at": user_msg.created_at.isoformat() if user_msg.created_at else "",
         },
         "response": {
             "id": str(assistant_msg.id),
+            "role": assistant_msg.role,
             "content": assistant_msg.content,
             "message_type": assistant_msg.message_type,
+            "source_skill": assistant_msg.source_skill,
+            "created_at": assistant_msg.created_at.isoformat() if assistant_msg.created_at else "",
         },
     }
 

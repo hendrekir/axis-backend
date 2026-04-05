@@ -112,6 +112,20 @@ async def update_me(
     }
 
 
+@router.get("/connections")
+async def get_connections(
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return connection status for all supported services."""
+    return [
+        {"provider": "Gmail", "is_connected": bool(user.gmail_connected)},
+        {"provider": "Google Calendar", "is_connected": bool(user.calendar_connected)},
+        {"provider": "Spotify", "is_connected": await _is_spotify_connected(user.id, db)},
+        {"provider": "Stripe", "is_connected": False},
+    ]
+
+
 @router.post("/me/device-token")
 async def store_device_token(
     body: DeviceTokenIn,
