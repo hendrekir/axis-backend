@@ -44,6 +44,7 @@ class ThreadMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     message_type: Mapped[str] = mapped_column(String, default="standard")
     source_skill: Mapped[str | None] = mapped_column(String)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

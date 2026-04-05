@@ -1,4 +1,5 @@
 import re
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -6,10 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import User, Task, ThreadMessage
+from models import User, Task, ThreadMessage, Note
 from prompts.thread_system import AXIS_SYSTEM
 from routes.auth import get_authenticated_user
-from services.claude_service import chat
+from services.claude_service import chat, generate
 from services.context_assembler import assemble_context_header
 from services.notes_service import save_note, search_notes
 from services.status_service import get_status
@@ -181,6 +182,62 @@ async def send_message(
     }
 
 
+@router.post("/dream")
+async def dream_compress(
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compress thread into a context summary note and archive messages."""
+    # Fetch last 50 non-archived messages
+    result = await db.execute(
+        select(ThreadMessage)
+        .where(
+            ThreadMessage.user_id == user.id,
+            ThreadMessage.archived == False,
+        )
+        .order_by(ThreadMessage.created_at.desc())
+        .limit(50)
+    )
+    messages = list(reversed(result.scalars().all()))
+
+    if not messages:
+        return {"summary": None, "archived_count": 0}
+
+    # Build conversation text for Claude
+    conversation = "\n".join(
+        f"[{m.role}] {m.content}" for m in messages
+    )
+
+    summary = await generate(
+        system_prompt=(
+            "You are Axis. Compress this conversation thread into a concise context summary. "
+            "Extract: key decisions made, commitments given, open loops, important facts learned, "
+            "and any action items. Write in third person about the user. "
+            "Be specific — names, dates, amounts. No filler. Max 300 words."
+        ),
+        user_message=conversation,
+        max_tokens=512,
+    )
+
+    # Save summary as a dream note
+    note = Note(
+        user_id=user.id,
+        content=summary,
+        source="dream",
+        tags=["dream", "context-compression"],
+        context_snapshot={"message_count": len(messages), "compressed_at": datetime.utcnow().isoformat()},
+    )
+    db.add(note)
+
+    # Archive all fetched messages
+    for m in messages:
+        m.archived = True
+
+    await db.commit()
+
+    return {"summary": summary, "archived_count": len(messages)}
+
+
 @router.get("/history")
 async def get_history(
     limit: int = 50,
@@ -190,7 +247,7 @@ async def get_history(
     """Get thread message history."""
     result = await db.execute(
         select(ThreadMessage)
-        .where(ThreadMessage.user_id == user.id)
+        .where(ThreadMessage.user_id == user.id, ThreadMessage.archived == False)
         .order_by(ThreadMessage.created_at.desc())
         .limit(limit)
     )

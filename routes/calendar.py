@@ -1,15 +1,23 @@
+import asyncio
+import logging
 import os
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import User
 from routes.auth import get_authenticated_user
-from services.calendar_service import fetch_todays_events, fetch_upcoming_events, detect_conflicts
+from services.calendar_service import (
+    fetch_todays_events, fetch_upcoming_events, detect_conflicts,
+    refresh_if_needed,
+)
+
+logger = logging.getLogger("axis.calendar.routes")
 
 router = APIRouter(tags=["Calendar"])
 
@@ -111,3 +119,151 @@ async def get_upcoming(
 
     events = await fetch_upcoming_events(user, db, hours_ahead=hours)
     return {"events": events}
+
+
+@router.get("/calendar/meeting-prep/{event_id}")
+async def get_meeting_prep(
+    event_id: str = Path(..., description="Google Calendar event ID"),
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Generate a meeting prep brief for a specific calendar event."""
+    if not user.calendar_connected:
+        raise HTTPException(status_code=400, detail="Calendar not connected")
+
+    # Fetch the specific event from Google Calendar
+    creds = await refresh_if_needed(user, db)
+    if creds is None:
+        raise HTTPException(status_code=400, detail="Calendar credentials invalid")
+
+    service = build("calendar", "v3", credentials=creds)
+    try:
+        event = service.events().get(calendarId="primary", eventId=event_id).execute()
+    except Exception:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    # Normalise event data
+    start = event.get("start", {})
+    end = event.get("end", {})
+    attendees_raw = event.get("attendees", [])
+    attendees = [
+        {"email": a.get("email", ""), "name": a.get("displayName", "")}
+        for a in attendees_raw[:10]
+    ]
+
+    event_data = {
+        "id": event.get("id", ""),
+        "summary": event.get("summary", "(No title)"),
+        "start_dt": start.get("dateTime", start.get("date", "")),
+        "end_dt": end.get("dateTime", end.get("date", "")),
+        "location": event.get("location", ""),
+        "description": (event.get("description") or "")[:500],
+        "attendees": attendees,
+        "meet_link": event.get("hangoutLink", ""),
+    }
+
+    # Fetch recent emails with attendees (if Gmail connected)
+    email_context = []
+    if user.gmail_connected and attendees:
+        from services.gmail_service import fetch_recent_emails
+        try:
+            emails = await fetch_recent_emails(user, db, max_results=50)
+            attendee_emails = {a["email"].lower() for a in attendees if a["email"]}
+            for e in emails:
+                sender = (e.get("from") or "").lower()
+                if any(addr in sender for addr in attendee_emails):
+                    email_context.append({
+                        "from": e.get("from", ""),
+                        "subject": e.get("subject", ""),
+                        "snippet": e.get("snippet", "")[:200],
+                        "date": e.get("date", ""),
+                    })
+            email_context = email_context[:5]
+        except Exception as exc:
+            logger.warning("Failed to fetch emails for meeting prep: %s", exc)
+
+    # Research each attendee via Perplexity (fall back to Claude)
+    attendees_with_context = []
+
+    async def _lookup_attendee(attendee: dict) -> dict:
+        name = attendee.get("name") or attendee.get("email", "")
+        if not name:
+            return {**attendee, "context": None}
+        try:
+            from services.perplexity_service import person_lookup
+            result = await person_lookup(
+                name, context=f"Meeting: {event_data['summary']}"
+            )
+            return {**attendee, "context": result["text"]}
+        except Exception:
+            try:
+                from services.claude_service import generate as claude_gen
+                text = await claude_gen(
+                    system_prompt="Provide brief professional context based on the name and email domain. 2-3 sentences. If unknown, say so.",
+                    user_message=f"Who is {name} ({attendee.get('email', '')})?",
+                    max_tokens=200,
+                )
+                return {**attendee, "context": text}
+            except Exception:
+                return {**attendee, "context": None}
+
+    if attendees:
+        tasks = [_lookup_attendee(a) for a in attendees[:5]]
+        attendees_with_context = await asyncio.gather(*tasks)
+    else:
+        attendees_with_context = []
+
+    # Generate key points and watch-for via Claude
+    from services.claude_service import generate as claude_gen
+
+    email_summary = "\n".join(
+        f"- {e['from']}: {e['subject']} — {e['snippet']}"
+        for e in email_context
+    ) if email_context else "No recent email history with attendees."
+
+    attendee_summary = "\n".join(
+        f"- {a.get('name') or a['email']}: {a.get('context') or 'No info available'}"
+        for a in attendees_with_context
+    ) if attendees_with_context else "No attendees listed."
+
+    analysis = await claude_gen(
+        system_prompt=(
+            "You are Axis, preparing a meeting brief. Return valid JSON only, no markdown fences. "
+            'Format: {"key_points": ["point 1", "point 2", ...], "watch_for": ["item 1", "item 2", ...]}'
+        ),
+        user_message=(
+            f"Meeting: {event_data['summary']}\n"
+            f"Time: {event_data['start_dt']}\n"
+            f"Location: {event_data['location'] or 'Not specified'}\n"
+            f"Description: {event_data['description'] or 'None'}\n\n"
+            f"Attendees:\n{attendee_summary}\n\n"
+            f"Recent emails with attendees:\n{email_summary}\n\n"
+            "Generate 3-5 key points to prepare for this meeting and 2-3 things to watch for."
+        ),
+        max_tokens=512,
+    )
+
+    # Parse Claude's JSON response
+    import json
+    try:
+        parsed = json.loads(analysis)
+        key_points = parsed.get("key_points", [])
+        watch_for = parsed.get("watch_for", [])
+    except (json.JSONDecodeError, TypeError):
+        key_points = [analysis]
+        watch_for = []
+
+    return {
+        "event": event_data,
+        "attendees_with_context": [
+            {
+                "email": a.get("email", ""),
+                "name": a.get("name", ""),
+                "context": a.get("context"),
+            }
+            for a in attendees_with_context
+        ],
+        "email_context": email_context,
+        "key_points": key_points,
+        "watch_for": watch_for,
+    }

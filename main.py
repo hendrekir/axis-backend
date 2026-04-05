@@ -191,6 +191,8 @@ async def lifespan(app: FastAPI):
                 dismissed BOOLEAN DEFAULT FALSE
             )""",
             # Journal entries table (Session 11)
+            # Thread message archival for Dream feature (Session 12)
+            "ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS archived BOOLEAN DEFAULT FALSE",
             """CREATE TABLE IF NOT EXISTS journal_entries (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id UUID REFERENCES users(id),

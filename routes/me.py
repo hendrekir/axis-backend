@@ -2,11 +2,11 @@ from enum import Enum
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import ApiConnection, User
+from models import ApiConnection, Task, ThreadMessage, User
 from routes.auth import get_authenticated_user
 from services.streak_service import touch_streak
 
@@ -19,6 +19,10 @@ class ModeEnum(str, Enum):
     builder = "builder"
     student = "student"
     founder = "founder"
+
+
+class DeviceTokenIn(BaseModel):
+    device_token: str
 
 
 class UpdateMeRequest(BaseModel):
@@ -105,4 +109,62 @@ async def update_me(
         "calendar_connected": user.calendar_connected,
         "spotify_connected": await _is_spotify_connected(user.id, db),
         "context_notes": user.context_notes or "",
+    }
+
+
+@router.post("/me/device-token")
+async def store_device_token(
+    body: DeviceTokenIn,
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Store an APNs device token for push notifications."""
+    user.apns_token = body.device_token
+    await db.commit()
+    return {"status": "registered", "device_token": body.device_token}
+
+
+@router.get("/me/widget-data")
+async def get_widget_data(
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Lightweight endpoint for WidgetKit — signal, MIT count, next event."""
+    # Top signal: latest assistant intel message (not archived)
+    signal_result = await db.execute(
+        select(ThreadMessage.content)
+        .where(
+            ThreadMessage.user_id == user.id,
+            ThreadMessage.role == "assistant",
+            ThreadMessage.message_type == "intel",
+            ThreadMessage.archived == False,
+        )
+        .order_by(ThreadMessage.created_at.desc())
+        .limit(1)
+    )
+    signal = signal_result.scalar_one_or_none()
+
+    # MIT count: incomplete urgent tasks
+    mit_result = await db.execute(
+        select(func.count())
+        .select_from(Task)
+        .where(Task.user_id == user.id, Task.is_done == False, Task.is_urgent == True)
+    )
+    mit_count = mit_result.scalar() or 0
+
+    # Next event (lightweight — only if calendar connected)
+    next_event = None
+    if user.calendar_connected:
+        from services.calendar_service import get_next_event
+        try:
+            evt = await get_next_event(user, db)
+            if evt:
+                next_event = {"title": evt["summary"], "time": evt["start_dt"]}
+        except Exception:
+            pass  # Don't fail widget data over calendar errors
+
+    return {
+        "signal": signal[:200] if signal else None,
+        "mit_count": mit_count,
+        "next_event": next_event,
     }
