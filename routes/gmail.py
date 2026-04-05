@@ -92,6 +92,12 @@ async def gmail_auth_callback(
     return RedirectResponse(frontend + "/settings?gmail=connected")
 
 
+@router.get("/gmail/status")
+async def gmail_status(user: User = Depends(get_authenticated_user)):
+    """Check if Gmail is connected for the authenticated user."""
+    return {"connected": bool(user.gmail_connected)}
+
+
 class SendEmailRequest(BaseModel):
     to: str
     subject: str
