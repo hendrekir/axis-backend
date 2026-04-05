@@ -247,6 +247,15 @@ async def auth_middleware(request: Request, call_next):
     if request.url.path in PUBLIC_PATHS:
         return await call_next(request)
 
+    # Simulator dev bypass — skip JWT, use hardcoded test user
+    if request.headers.get("X-Dev-Simulator") == "true":
+        class SimulatorUser:
+            def __init__(self):
+                self.clerk_id = "simulator_test_user"
+                self.claims = {"sub": "simulator_test_user", "name": "Test User"}
+        request.state.user = SimulatorUser()
+        return await call_next(request)
+
     # Verify auth token
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
