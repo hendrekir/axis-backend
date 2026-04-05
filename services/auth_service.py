@@ -6,14 +6,7 @@ from jwt import PyJWKClient
 
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "")
 def _get_jwks_client() -> PyJWKClient:
-    jwks_url = os.getenv("CLERK_JWKS_URL", "")
-    if not jwks_url:
-        pk = os.getenv("CLERK_PUBLISHABLE_KEY", "")
-        if pk:
-            parts = pk.replace("pk_test_", "").replace("pk_live_", "")
-            jwks_url = f"https://{parts}/.well-known/jwks.json"
-        else:
-            raise ValueError("CLERK_JWKS_URL or CLERK_PUBLISHABLE_KEY must be set")
+    jwks_url = os.getenv("CLERK_JWKS_URL", "https://tryaxis.app/.well-known/jwks.json")
     return PyJWKClient(jwks_url)
 
 
