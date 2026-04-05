@@ -25,7 +25,7 @@ async def get_insights(
     # Task completion rate this week
     week_ago = datetime.utcnow() - timedelta(days=7)
     result = await db.execute(
-        select(func.count()).where(
+        select(func.count()).select_from(Task).where(
             Task.user_id == user.id,
             Task.created_at >= week_ago,
         )
@@ -33,7 +33,7 @@ async def get_insights(
     total_tasks = result.scalar() or 0
 
     result = await db.execute(
-        select(func.count()).where(
+        select(func.count()).select_from(Task).where(
             Task.user_id == user.id,
             Task.is_done == True,
             Task.created_at >= week_ago,
@@ -47,7 +47,7 @@ async def get_insights(
 
     # Capture usage — broad match across surface/content_type patterns
     result = await db.execute(
-        select(func.count()).where(
+        select(func.count()).select_from(Interaction).where(
             Interaction.user_id == user.id,
             Interaction.created_at >= week_ago,
             or_(
