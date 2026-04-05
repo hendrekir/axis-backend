@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database import get_db
 from models import User
 from routes.auth import get_authenticated_user
-from services.gmail_service import send_email
+from services.gmail_service import send_email, fetch_recent_emails
 
 router = APIRouter(tags=["Gmail"])
 
@@ -108,6 +108,19 @@ async def gmail_auth_callback(
 async def gmail_status(user: User = Depends(get_authenticated_user)):
     """Check if Gmail is connected for the authenticated user."""
     return {"connected": bool(user.gmail_connected)}
+
+
+@router.get("/gmail/inbox")
+async def gmail_inbox(
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return last 10 emails for ambient intelligence context."""
+    if not user.gmail_connected:
+        raise HTTPException(status_code=400, detail="Gmail not connected")
+
+    emails = await fetch_recent_emails(user, db, max_results=10)
+    return {"emails": emails}
 
 
 class SendEmailRequest(BaseModel):
