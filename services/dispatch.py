@@ -15,12 +15,12 @@ For each connected user:
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import User, Task, ThreadMessage, UserModel, Interaction, Skill, AgentActivity
+from models import User, Task, ThreadMessage, UserModel, Interaction, Skill, AgentActivity, DispatchedSignal
 from prompts.dispatch_v2 import DISPATCH_V2_SYSTEM
 from services.claude_service import generate
 from services.gmail_service import fetch_recent_emails
@@ -61,6 +61,64 @@ def format_signal_for_thread(item: dict) -> str:
     else:
         raw = title
     return _sanitize_content(raw)
+
+
+def _signal_key(item: dict) -> str:
+    """Derive a dedup key from an item — source + item_id or title hash."""
+    source = item.get("source", "unknown")
+    item_id = item.get("item_id") or item.get("id") or ""
+    if item_id:
+        return f"{source}:{item_id}"
+    title = item.get("title") or item.get("summary") or ""
+    return f"{source}:{hash(title)}"
+
+
+async def _is_duplicate(user_id, item: dict, db: AsyncSession) -> bool:
+    """Return True if this signal was already surfaced in the last 48 hours
+    with the same or higher urgency."""
+    key = _signal_key(item)
+    cutoff = datetime.utcnow() - timedelta(hours=48)
+    result = await db.execute(
+        select(DispatchedSignal).where(
+            and_(
+                DispatchedSignal.user_id == user_id,
+                DispatchedSignal.signal_key == key,
+                DispatchedSignal.dispatched_at >= cutoff,
+            )
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if not existing:
+        return False
+    # Allow re-surface if urgency increased
+    new_urgency = item.get("urgency", item.get("score", 5))
+    return new_urgency <= existing.urgency
+
+
+async def _record_signal(user_id, item: dict, surface: str, db: AsyncSession):
+    """Upsert a dispatched signal record."""
+    key = _signal_key(item)
+    urgency = item.get("urgency", item.get("score", 5))
+    result = await db.execute(
+        select(DispatchedSignal).where(
+            and_(
+                DispatchedSignal.user_id == user_id,
+                DispatchedSignal.signal_key == key,
+            )
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        existing.urgency = urgency
+        existing.surface = surface
+        existing.dispatched_at = datetime.utcnow()
+    else:
+        db.add(DispatchedSignal(
+            user_id=user_id,
+            signal_key=key,
+            surface=surface,
+            urgency=urgency,
+        ))
 
 
 async def _build_context(user: User, db: AsyncSession) -> dict:
@@ -157,6 +215,11 @@ async def _route_item(item: dict, user: User, db: AsyncSession):
         ))
         return
 
+    # --- Dedup: skip if same signal surfaced in last 48hrs (unless urgency rose) ---
+    if await _is_duplicate(user.id, item, db):
+        logger.debug("Dedup skipped: %s", item.get("title") or item.get("summary", ""))
+        return
+
     # --- Thread message for push / thread / widget / digest ---
     content = format_signal_for_thread(item)
 
@@ -188,6 +251,9 @@ async def _route_item(item: dict, user: User, db: AsyncSession):
         action_taken="surfaced",
         mode=user.mode,
     ))
+
+    # --- Record for dedup ---
+    await _record_signal(user.id, item, surface, db)
 
 
 async def _generate_email_draft(item: dict, user: User, db: AsyncSession) -> str:
@@ -270,9 +336,33 @@ async def dispatch_user(user: User, db: AsyncSession) -> dict:
         except Exception as e:
             logger.warning("Calendar fetch failed in dispatch for user %s: %s", user.id, e)
 
-    # Skip if no new data
+    # Check for pending captures (tasks created since last dispatch)
+    pending_captures = []
+    if user.last_dispatch_run:
+        cap_result = await db.execute(
+            select(Task)
+            .where(
+                Task.user_id == user.id,
+                Task.is_done == False,
+                Task.created_at >= user.last_dispatch_run,
+            )
+            .limit(10)
+        )
+        new_tasks = cap_result.scalars().all()
+        for t in new_tasks:
+            raw_items.append({
+                "id": str(t.id),
+                "source": "capture",
+                "summary": t.title,
+                "category": t.category,
+                "is_urgent": t.is_urgent,
+            })
+        stats["captures_pending"] = len(new_tasks)
+
+    # Skip-if-empty: no emails, no calendar, no captures → skip Claude call entirely.
+    # Still run meeting prep check and dispatch-triggered skills.
     if not raw_items:
-        logger.info("No new data for user %s — running dispatch skills only", user.id)
+        logger.info("No new data for user %s — skipping Claude, running skills only", user.id)
         skill_results = await run_dispatch_skills(user, db)
         stats["skills_run"] = len(skill_results)
         user.last_dispatch_run = datetime.utcnow()

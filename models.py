@@ -320,6 +320,18 @@ class JournalEntry(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class DispatchedSignal(Base):
+    __tablename__ = "dispatched_signals"
+    __table_args__ = (UniqueConstraint("user_id", "signal_key"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    signal_key: Mapped[str] = mapped_column(String, nullable=False)
+    surface: Mapped[str] = mapped_column(String, nullable=False)
+    urgency: Mapped[int] = mapped_column(Integer, default=5)
+    dispatched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
     __table_args__ = (UniqueConstraint("user_id", "endpoint"),)

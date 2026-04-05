@@ -193,6 +193,17 @@ async def lifespan(app: FastAPI):
             # Journal entries table (Session 11)
             # Thread message archival for Dream feature (Session 12)
             "ALTER TABLE thread_messages ADD COLUMN IF NOT EXISTS archived BOOLEAN DEFAULT FALSE",
+            # Signal deduplication table (Session 14)
+            """CREATE TABLE IF NOT EXISTS dispatched_signals (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                signal_key TEXT NOT NULL,
+                surface TEXT NOT NULL,
+                urgency INTEGER DEFAULT 5,
+                dispatched_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(user_id, signal_key)
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_dispatched_signals_user_at ON dispatched_signals(user_id, dispatched_at)",
             """CREATE TABLE IF NOT EXISTS journal_entries (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id UUID REFERENCES users(id),
