@@ -5,29 +5,16 @@ import jwt
 from jwt import PyJWKClient
 
 CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "")
-CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "https://primary-polliwog-70.clerk.accounts.dev/.well-known/jwks.json")
-
-# Cache the JWKS client — it fetches keys on first use and caches them
-_jwks_client: PyJWKClient | None = None
-
-
 def _get_jwks_client() -> PyJWKClient:
-    global _jwks_client
-    if _jwks_client is None:
-        # Derive JWKS URL from Clerk frontend API if not set explicitly
-        jwks_url = CLERK_JWKS_URL
-        if not jwks_url:
-            # Clerk publishable key format: pk_test_<base64>.clerk.accounts.dev
-            # JWKS is at https://<frontend-api>/.well-known/jwks.json
-            pk = os.getenv("CLERK_PUBLISHABLE_KEY", "")
-            if pk:
-                # Extract the domain from publishable key
-                parts = pk.replace("pk_test_", "").replace("pk_live_", "")
-                jwks_url = f"https://{parts}/.well-known/jwks.json"
-            else:
-                raise ValueError("CLERK_JWKS_URL or CLERK_PUBLISHABLE_KEY must be set")
-        _jwks_client = PyJWKClient(jwks_url)
-    return _jwks_client
+    jwks_url = os.getenv("CLERK_JWKS_URL", "")
+    if not jwks_url:
+        pk = os.getenv("CLERK_PUBLISHABLE_KEY", "")
+        if pk:
+            parts = pk.replace("pk_test_", "").replace("pk_live_", "")
+            jwks_url = f"https://{parts}/.well-known/jwks.json"
+        else:
+            raise ValueError("CLERK_JWKS_URL or CLERK_PUBLISHABLE_KEY must be set")
+    return PyJWKClient(jwks_url)
 
 
 async def verify_clerk_token(token: str) -> dict | None:
