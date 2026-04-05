@@ -44,17 +44,21 @@ def _build_flow() -> Flow:
 @router.get("/auth/gmail")
 async def gmail_auth_start(
     clerk_id: str = Query(..., description="Clerk user ID"),
+    source: str = Query("web", description="Client source: 'ios' or 'web'"),
 ):
     """Redirect the user to Google's OAuth consent screen.
 
     No auth required — the frontend passes the Clerk user ID as a query
     param. The callback uses it to look up the user in the database.
+    source=ios triggers a custom URL scheme redirect on callback.
     """
     flow = _build_flow()
+    # Encode source into state so the callback knows where to redirect
+    oauth_state = f"{clerk_id}:{source}"
     auth_url, _state = flow.authorization_url(
         access_type="offline",
         prompt="consent",
-        state=clerk_id,
+        state=oauth_state,
     )
     return RedirectResponse(auth_url)
 
@@ -72,11 +76,16 @@ async def gmail_auth_callback(
 
     credentials = flow.credentials
 
+    # Parse clerk_id and source from OAuth state
+    parts = state.rsplit(":", 1)
+    clerk_id = parts[0]
+    source = parts[1] if len(parts) > 1 else "web"
+
     # Look up user by clerk_id passed through OAuth state, auto-create if missing
-    result = await db.execute(select(User).where(User.clerk_id == state))
+    result = await db.execute(select(User).where(User.clerk_id == clerk_id))
     user = result.scalar_one_or_none()
     if user is None:
-        user = User(clerk_id=state, mode="personal", plan="free")
+        user = User(clerk_id=clerk_id, mode="personal", plan="free")
         db.add(user)
         await db.flush()
 
@@ -87,7 +96,10 @@ async def gmail_auth_callback(
 
     await db.commit()
 
-    # Redirect back to the frontend settings page
+    # Redirect to iOS custom scheme or web frontend
+    if source == "ios":
+        return RedirectResponse("axis://gmail-connected")
+
     frontend = os.environ.get("FRONTEND_URL", "http://localhost:5173")
     return RedirectResponse(frontend + "/settings?gmail=connected")
 
