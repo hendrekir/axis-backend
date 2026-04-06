@@ -31,6 +31,7 @@ from routes.schedule import router as schedule_router
 from routes.quick_capture import router as quick_capture_router
 from routes.insights import router as insights_router
 from routes.journal import router as journal_router
+from routes.capture import router as capture_router
 from services.dispatch import run_dispatch
 from services.morning_digest import run_morning_digest
 from services.apprentice import run_all_improvement, run_all_voice_rebuild
@@ -311,6 +312,7 @@ app.include_router(schedule_router, tags=["Schedule"])
 app.include_router(quick_capture_router, tags=["Quick Capture"])
 app.include_router(insights_router, tags=["Insights"])
 app.include_router(journal_router, tags=["Journal"])
+app.include_router(capture_router, tags=["Capture"])
 
 
 @app.get("/")
