@@ -661,6 +661,45 @@ When that happens once — genuinely, not in a test — the product is real.
 
 ---
 
+---
+
+## 21. DECISION LOG
+
+### Session 14 — 5-6 April 2026
+
+**What was built:**
+
+1. **POST /capture with 7-type classification** — New `/capture` endpoint. Saves immediately to tasks table, then classifies via Claude into: relationship_task, calendar_task, research_task, reminder, discovery_intent, follow_up, personal_goal. Extracts person, urgency, suggested surface time. GET /capture returns unhandled captures. This replaces the old quick-capture flow as the primary input for capture-first onboarding.
+
+2. **Signal deduplication** — `dispatched_signals` table with composite unique on (user_id, signal_key). Every signal routed through `_route_item` is checked against a 48hr window. Same signal is suppressed unless urgency increased. This was the #1 retention risk — duplicate notifications would have killed the product.
+
+3. **Skip-if-empty dispatch** — If no new emails, no new calendar events, and no pending captures since last run, the Claude call is skipped entirely. Meeting prep and dispatch skills still run. Cuts cost ~60% for inactive periods.
+
+4. **OpenRouter service** — `services/openrouter_service.py` with single `call_model(task, system, user_message, max_tokens)`. Routes triage + capture_classify through `google/gemini-flash-1.5`, everything else through `anthropic/claude-sonnet-4-6`. Falls back to direct Anthropic SDK if OPENROUTER_API_KEY not set, so existing deploys keep working.
+
+5. **Travel time alerts** — `services/maps_service.py` calls Google Maps Distance Matrix API. Dispatch loop checks calendar events in next 3hrs with a location, calculates departure time (drive + 5min buffer), fires urgency-9 push if departure is within 30 minutes. Bypasses skip-if-empty — travel alerts always run. Origin is (0,0) placeholder until iOS sends GPS coordinates.
+
+6. **POST /calendar/create** — Write events to Google Calendar. Accepts title, start_dt, end_dt, location, description. Returns event_id, title, start_dt, html_link. OAuth scope upgraded from calendar.readonly to full calendar (existing users must re-auth once). POST /schedule/confirm updated to return html_link.
+
+7. **GET /me/recommendation** — One personalised discovery per day. Reads context_notes + last 3 journal entries, calls Perplexity for a specific podcast/article/book. Cached in recommendations table (unique per user per day). Subsequent hits return instantly.
+
+8. **Capture route bug fix** — POST /capture was returning 500 because `touch_streak(user, db)` was passing the User object instead of `user.id`. Fixed, added full traceback logging, added GET /capture/test health check endpoint.
+
+9. **Thread message sanitisation** — `format_signal_for_thread()` strips internal fields (triage scores, urgency scores, surface routing, model_to_use) before saving to thread_messages. Regex-based line filter on all dispatch output.
+
+**What was decided against:**
+
+- Did not replace `model_router.py` with OpenRouter yet — existing router still handles Perplexity, Grok, Gemini direct calls. OpenRouter service exists alongside it. Migration happens when OPENROUTER_API_KEY is the only key configured.
+- Did not add user GPS tracking to the User model — travel time uses (0,0) origin. Real coordinates come from iOS via a future PATCH /me/location or dispatch request header.
+- Did not build the AirPods audio brief — requires ElevenLabs integration and iOS audio routing. Blocked on Apple Developer account.
+- Did not add capture-first onboarding to the web frontend — backend is ready, frontend change is in axis-web repo.
+
+**Pending confirmation:**
+
+- Keyboard autofocus on capture prompt in iOS/web — backend supports it, UX decision pending.
+
+---
+
 *Copy to ~/forge/axis-backend/CLAUDE.md, ~/forge/axis-web/CLAUDE.md, ~/forge/axis-ios/CLAUDE.md*
 *Load at the start of every session. Never start without it.*
 *END OF AXIS CLAUDE.md v6.0*
