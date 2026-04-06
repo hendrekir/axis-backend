@@ -336,6 +336,50 @@ async def dispatch_user(user: User, db: AsyncSession) -> dict:
         except Exception as e:
             logger.warning("Calendar fetch failed in dispatch for user %s: %s", user.id, e)
 
+    # Travel time check — runs for calendar events in next 3hrs with a location.
+    # Bypasses skip-if-empty: routed directly, not through triage/Claude.
+    if user.calendar_connected:
+        try:
+            from services.maps_service import get_travel_time
+            from services.calendar_service import fetch_upcoming_events as _fetch_events
+            travel_events = await _fetch_events(user, db, hours_ahead=3, max_results=5)
+            now = datetime.utcnow()
+            for ev in travel_events:
+                location = ev.get("location", "")
+                if not location:
+                    continue
+                start_str = ev.get("start_dt", "")
+                if not start_str or "T" not in start_str:
+                    continue
+                try:
+                    event_start = datetime.fromisoformat(start_str.replace("Z", "+00:00")).replace(tzinfo=None)
+                except Exception:
+                    continue
+                # Estimate travel time (use 0,0 as origin placeholder — real GPS comes from iOS)
+                drive_mins = await get_travel_time(0, 0, location)
+                if drive_mins is None:
+                    continue
+                depart_at = event_start - timedelta(minutes=drive_mins + 5)
+                mins_until_depart = (depart_at - now).total_seconds() / 60
+                if 0 <= mins_until_depart <= 30:
+                    travel_signal = {
+                        "id": f"travel_{ev.get('id', '')}",
+                        "item_id": f"travel_{ev.get('id', '')}",
+                        "source": "travel_time",
+                        "title": f"Leave in {int(mins_until_depart)} minutes for {ev['summary']}",
+                        "summary": f"{drive_mins} min drive to {location}",
+                        "pre_prepared_action": f"{drive_mins} min drive · {location}",
+                        "surface": "push",
+                        "urgency": 9,
+                        "action_type": "open_maps",
+                        "skill_name": "travel_time",
+                    }
+                    await _route_item(travel_signal, user, db)
+                    stats["pushed"] = stats.get("pushed", 0) + 1
+                    logger.info("Travel alert for %s: %s in %d min", user.name, ev["summary"], int(mins_until_depart))
+        except Exception as e:
+            logger.warning("Travel time check failed for user %s: %s", user.id, e)
+
     # Check for pending captures (tasks created since last dispatch)
     pending_captures = []
     if user.last_dispatch_run:
