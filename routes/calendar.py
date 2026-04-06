@@ -2,7 +2,9 @@ import asyncio
 import logging
 import os
 
+from datetime import datetime as dt_datetime
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
+from pydantic import BaseModel
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -13,15 +15,15 @@ from database import get_db
 from models import User
 from routes.auth import get_authenticated_user
 from services.calendar_service import (
-    fetch_todays_events, fetch_upcoming_events, detect_conflicts,
-    refresh_if_needed,
+    create_calendar_event, fetch_todays_events, fetch_upcoming_events,
+    detect_conflicts, refresh_if_needed,
 )
 
 logger = logging.getLogger("axis.calendar.routes")
 
 router = APIRouter(tags=["Calendar"])
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
 def _get_redirect_uri() -> str:
@@ -267,3 +269,37 @@ async def get_meeting_prep(
         "key_points": key_points,
         "watch_for": watch_for,
     }
+
+
+class CreateEventIn(BaseModel):
+    title: str
+    start_dt: str
+    end_dt: str
+    location: str | None = None
+    description: str | None = None
+
+
+@router.post("/calendar/create")
+async def create_event(
+    body: CreateEventIn,
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a Google Calendar event."""
+    if not user.calendar_connected:
+        raise HTTPException(status_code=400, detail="Calendar not connected")
+
+    start = dt_datetime.fromisoformat(body.start_dt)
+    end = dt_datetime.fromisoformat(body.end_dt)
+
+    result = await create_calendar_event(
+        user=user,
+        db=db,
+        summary=body.title,
+        start=start,
+        end=end,
+        location=body.location,
+        description=body.description,
+    )
+
+    return result

@@ -161,22 +161,34 @@ async def create_calendar_event(
     start: datetime,
     end: datetime,
     attendee: str | None = None,
-) -> str | None:
-    """Create a Google Calendar event. Returns event ID or None."""
+    location: str | None = None,
+    description: str | None = None,
+) -> dict:
+    """Create a Google Calendar event. Returns dict with event_id, title, start_dt, html_link."""
     creds = await refresh_if_needed(user, db)
     if creds is None:
         raise ValueError("Google Calendar not connected")
 
     service = build("calendar", "v3", credentials=creds)
 
+    tz = user.timezone or "Australia/Brisbane"
     event_body = {
         "summary": summary,
-        "start": {"dateTime": start.isoformat(), "timeZone": user.timezone or "Australia/Brisbane"},
-        "end": {"dateTime": end.isoformat(), "timeZone": user.timezone or "Australia/Brisbane"},
+        "start": {"dateTime": start.isoformat(), "timeZone": tz},
+        "end": {"dateTime": end.isoformat(), "timeZone": tz},
     }
 
     if attendee:
         event_body["attendees"] = [{"email": attendee}] if "@" in attendee else []
+    if location:
+        event_body["location"] = location
+    if description:
+        event_body["description"] = description
 
     result = service.events().insert(calendarId="primary", body=event_body).execute()
-    return result.get("id")
+    return {
+        "event_id": result.get("id"),
+        "title": summary,
+        "start_dt": start.isoformat(),
+        "html_link": result.get("htmlLink"),
+    }

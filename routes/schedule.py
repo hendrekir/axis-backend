@@ -92,7 +92,7 @@ async def confirm_schedule(
     start = datetime.fromisoformat(body.datetime_str)
     end = start + timedelta(minutes=body.duration_minutes)
 
-    event_id = await create_calendar_event(
+    result = await create_calendar_event(
         user=user,
         db=db,
         summary=body.subject,
@@ -102,6 +102,6 @@ async def confirm_schedule(
     )
 
     return {
-        "event_id": event_id,
+        **result,
         "confirmation_message": f"Added '{body.subject}' to your calendar — {start.strftime('%A %B %d at %I:%M %p')}.",
     }
