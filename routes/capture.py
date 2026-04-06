@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import traceback
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -40,64 +41,74 @@ class CaptureIn(BaseModel):
     content: str
 
 
+@router.get("/test")
+async def capture_test():
+    return {"status": "capture router ok"}
+
+
 @router.post("")
 async def create_capture(
     body: CaptureIn,
     user: User = Depends(get_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    # 1. Save immediately as a capture task
-    task = Task(
-        user_id=user.id,
-        title=body.content[:200],
-        category="capture",
-        is_urgent=False,
-    )
-    db.add(task)
-    await db.flush()  # get task.id
-
-    # 2. Classify via Claude
-    capture_type = "reminder"
-    person = None
-    urgency = 5
-    suggested_time = "morning"
-    title = body.content[:200]
-
     try:
-        raw = await generate(
-            system_prompt=CAPTURE_CLASSIFY_SYSTEM,
-            user_message=body.content,
-            max_tokens=256,
+        # 1. Save immediately as a capture task
+        task = Task(
+            user_id=user.id,
+            title=body.content[:200],
+            category="capture",
+            is_urgent=False,
         )
-        cleaned = re.sub(r'^```(?:json)?\s*\n?', '', raw.strip())
-        cleaned = re.sub(r'\n?```\s*$', '', cleaned)
-        result = json.loads(cleaned)
+        db.add(task)
+        await db.flush()  # get task.id
 
-        capture_type = result.get("capture_type", "reminder")
-        person = result.get("person")
-        urgency = result.get("urgency", 5)
-        suggested_time = result.get("suggested_surface_time", "morning")
-        if result.get("title"):
-            title = result["title"]
+        # 2. Classify via Claude
+        capture_type = "reminder"
+        person = None
+        urgency = 5
+        suggested_time = "morning"
+        title = body.content[:200]
+
+        try:
+            raw = await generate(
+                system_prompt=CAPTURE_CLASSIFY_SYSTEM,
+                user_message=body.content,
+                max_tokens=256,
+            )
+            cleaned = re.sub(r'^```(?:json)?\s*\n?', '', raw.strip())
+            cleaned = re.sub(r'\n?```\s*$', '', cleaned)
+            result = json.loads(cleaned)
+
+            capture_type = result.get("capture_type", "reminder")
+            person = result.get("person")
+            urgency = result.get("urgency", 5)
+            suggested_time = result.get("suggested_surface_time", "morning")
+            if result.get("title"):
+                title = result["title"]
+        except Exception as e:
+            logger.warning("Capture classification failed for user %s: %s", user.id, e)
+
+        # 3. Update the task with classification
+        task.title = title
+        task.category = capture_type
+        task.is_urgent = urgency >= 8
+
+        await touch_streak(user.id, db)
+        await db.commit()
+
+        return {
+            "id": str(task.id),
+            "content": body.content,
+            "capture_type": capture_type,
+            "person": person,
+            "urgency": urgency,
+            "suggested_time": suggested_time,
+        }
+
     except Exception as e:
-        logger.warning("Capture classification failed for user %s: %s", user.id, e)
-
-    # 3. Update the task with classification
-    task.title = title
-    task.category = capture_type
-    task.is_urgent = urgency >= 8
-
-    await touch_streak(user, db)
-    await db.commit()
-
-    return {
-        "id": str(task.id),
-        "content": body.content,
-        "capture_type": capture_type,
-        "person": person,
-        "urgency": urgency,
-        "suggested_time": suggested_time,
-    }
+        logger.error("POST /capture failed for user %s: %s\n%s", user.id, e, traceback.format_exc())
+        raise
 
 
 @router.get("")
