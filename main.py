@@ -205,6 +205,15 @@ async def lifespan(app: FastAPI):
                 UNIQUE(user_id, signal_key)
             )""",
             "CREATE INDEX IF NOT EXISTS ix_dispatched_signals_user_at ON dispatched_signals(user_id, dispatched_at)",
+            # Recommendations table (Session 14)
+            """CREATE TABLE IF NOT EXISTS recommendations (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                date DATE NOT NULL,
+                recommendation JSONB NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(user_id, date)
+            )""",
             """CREATE TABLE IF NOT EXISTS journal_entries (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                 user_id UUID REFERENCES users(id),

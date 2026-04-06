@@ -1,3 +1,7 @@
+import json
+import logging
+import re
+from datetime import date
 from enum import Enum
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -5,8 +9,10 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+logger = logging.getLogger("axis.me")
+
 from database import get_db
-from models import ApiConnection, Task, ThreadMessage, User
+from models import ApiConnection, JournalEntry, Recommendation, Task, ThreadMessage, User
 from routes.auth import get_authenticated_user
 from services.streak_service import touch_streak
 
@@ -182,3 +188,90 @@ async def get_widget_data(
         "mit_count": mit_count,
         "next_event": next_event,
     }
+
+
+RECOMMENDATION_SYSTEM = """You are a personal researcher. Based on this person's context — their notes, recent journal entries, and what they're thinking about — recommend ONE thing to read, watch, or listen to today.
+
+It must be a real, specific, existing piece of content. Not generic. Relevant to their life this week.
+
+Return ONLY valid JSON:
+{"type": "podcast|article|book", "title": "exact title", "reason": "one sentence why this is relevant to them right now", "url": "real URL", "source": "where to find it"}"""
+
+
+@router.get("/me/recommendation")
+async def get_recommendation(
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """One personalised recommendation per day, cached."""
+    today = date.today()
+
+    # Check cache
+    result = await db.execute(
+        select(Recommendation).where(
+            Recommendation.user_id == user.id,
+            Recommendation.date == today,
+        )
+    )
+    cached = result.scalar_one_or_none()
+    if cached:
+        return cached.recommendation
+
+    # Build context from user notes + recent journal
+    parts = []
+    if user.context_notes:
+        parts.append(f"About this person:\n{user.context_notes}")
+
+    journal_result = await db.execute(
+        select(JournalEntry)
+        .where(JournalEntry.user_id == user.id)
+        .order_by(JournalEntry.created_at.desc())
+        .limit(3)
+    )
+    entries = journal_result.scalars().all()
+    if entries:
+        journal_text = "\n".join(
+            f"- Q: {e.question}\n  A: {e.answer}" for e in entries
+        )
+        parts.append(f"Recent journal:\n{journal_text}")
+
+    if not parts:
+        parts.append("No context available yet — recommend something broadly useful for personal growth.")
+
+    context = "\n\n".join(parts)
+
+    # Call Perplexity (via model_router, falls back to Claude)
+    from services.model_router import route
+    raw_result = await route(
+        task_type="discovery",
+        system=RECOMMENDATION_SYSTEM,
+        user_msg=context,
+        max_tokens=512,
+    )
+
+    # Parse JSON
+    raw_text = raw_result["text"]
+    cleaned = re.sub(r'^```(?:json)?\s*\n?', '', raw_text.strip())
+    cleaned = re.sub(r'\n?```\s*$', '', cleaned)
+
+    try:
+        rec = json.loads(cleaned)
+    except json.JSONDecodeError:
+        logger.warning("Recommendation parse failed for user %s: %s", user.id, raw_text[:200])
+        rec = {
+            "type": "article",
+            "title": "Could not generate recommendation",
+            "reason": "Try again tomorrow — Axis needs more context.",
+            "url": "",
+            "source": "",
+        }
+
+    # Cache
+    db.add(Recommendation(
+        user_id=user.id,
+        date=today,
+        recommendation=rec,
+    ))
+    await db.commit()
+
+    return rec
