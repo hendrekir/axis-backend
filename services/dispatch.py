@@ -25,6 +25,7 @@ from prompts.dispatch_v2 import DISPATCH_V2_SYSTEM
 from services.claude_service import generate
 from services.gmail_service import fetch_recent_emails
 from services.push_service import send_push
+from services import apns_service
 from services.skill_engine import run_dispatch_skills
 from services.triage_service import triage_items
 from services.signal_filter import apply_filters
@@ -232,15 +233,12 @@ async def _route_item(item: dict, user: User, db: AsyncSession):
     )
     db.add(msg)
 
-    # --- Push notification ---
+    # --- Push notification (categorised APNs) ---
     if surface == "push" and user.apns_token:
-        push_title = (item.get("title") or item.get("action") or item.get("summary") or "New signal")[:60]
-        body = (item.get("pre_prepared_action") or "")[:100]
-        await send_push(user.apns_token, push_title, body, data={
-            "action_type": item.get("action_type", "none"),
-            "item_id": item.get("item_id", ""),
-            "skill": item.get("skill_name", ""),
-        })
+        try:
+            await apns_service.send_for_signal(user, item)
+        except Exception as e:
+            logger.warning("APNs send_for_signal failed: %s", e)
 
     # --- Log interaction ---
     db.add(Interaction(
