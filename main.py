@@ -1,15 +1,20 @@
 import logging
 import os
+import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+
+import jwt
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, status
-from sqlalchemy import text
+from sqlalchemy import select, text
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from database import engine, Base, async_session
+from models import User
 from routes.auth import get_current_user
 from routes.thread import router as thread_router
 from routes.signals import router as signals_router
@@ -44,7 +49,7 @@ load_dotenv()
 logger = logging.getLogger("axis.scheduler")
 
 # Public routes that skip auth
-PUBLIC_PATHS = {"/", "/health", "/capture/test", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/auth/calendar", "/auth/calendar/callback", "/auth/spotify", "/auth/spotify/callback", "/cron/dispatch", "/cron/digest", "/cron/streak-reminder", "/cron/journal-prompt"}
+PUBLIC_PATHS = {"/", "/health", "/capture/test", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/auth/calendar", "/auth/calendar/callback", "/auth/spotify", "/auth/spotify/callback", "/cron/dispatch", "/cron/digest", "/cron/streak-reminder", "/cron/journal-prompt", "/auth/dev-login"}
 
 
 async def _scheduled_dispatch():
@@ -294,6 +299,27 @@ app.add_middleware(
 )
 
 
+DEV_TOKEN_SECRET = os.environ.get("SECRET_KEY", "axis-dev-secret")
+
+
+def _verify_dev_token(token: str):
+    """Verify a self-signed dev JWT (HS256). Returns a minimal user object or None."""
+    if os.environ.get("DEV_MODE") != "true":
+        return None
+    try:
+        claims = jwt.decode(token, DEV_TOKEN_SECRET, algorithms=["HS256"])
+        if claims.get("dev") is not True:
+            return None
+
+        class DevUser:
+            def __init__(self, clerk_id, claims):
+                self.clerk_id = clerk_id
+                self.claims = claims
+        return DevUser(claims["sub"], claims)
+    except Exception:
+        return None
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -320,6 +346,14 @@ async def auth_middleware(request: Request, call_next):
         )
 
     token = auth_header.split(" ", 1)[1]
+
+    # Try dev token first (self-signed HS256)
+    dev_user = _verify_dev_token(token)
+    if dev_user is not None:
+        request.state.user = dev_user
+        return await call_next(request)
+
+    # Then try Clerk token
     user = await get_current_user(token)
     if user is None:
         return JSONResponse(
@@ -364,5 +398,51 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+from pydantic import BaseModel as _BaseModel
+
+
+class _DevLoginRequest(_BaseModel):
+    email: str
+
+
+@app.post("/auth/dev-login")
+async def dev_login(body: _DevLoginRequest):
+    """Dev-only login: find or create user by email, return a signed JWT.
+    Only active when DEV_MODE=true in environment."""
+    if os.environ.get("DEV_MODE") != "true":
+        raise HTTPException(status_code=403, detail="Dev login disabled")
+
+    async with async_session() as db:
+        result = await db.execute(select(User).where(User.clerk_id == f"dev_{body.email}"))
+        user = result.scalar_one_or_none()
+
+        if user is None:
+            user = User(
+                id=uuid.uuid4(),
+                clerk_id=f"dev_{body.email}",
+                name=body.email.split("@")[0].title(),
+                mode="personal",
+                plan="solo",
+            )
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+
+        token = jwt.encode(
+            {
+                "sub": user.clerk_id,
+                "dev": True,
+                "email": body.email,
+                "user_id": str(user.id),
+                "name": user.name,
+                "exp": datetime.now(timezone.utc) + timedelta(days=90),
+            },
+            DEV_TOKEN_SECRET,
+            algorithm="HS256",
+        )
+
+        return {"token": token, "user_id": str(user.id), "email": body.email}
 
 
