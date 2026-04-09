@@ -279,6 +279,16 @@ async def run_all_improvement(db: AsyncSession) -> list[dict]:
         except Exception as e:
             logger.warning("Person profile rebuild failed for %s: %s", user.name, e)
 
+        # Silence-as-signal detection
+        try:
+            from services.silence_detection import detect_silence_signals
+            silence = await detect_silence_signals(user, db)
+            r["silence_signals"] = len(silence)
+            if silence:
+                logger.info("Detected %d silence signals for %s", len(silence), user.name)
+        except Exception as e:
+            logger.warning("Silence detection failed for %s: %s", user.name, e)
+
         # Detect patterns and generate proactive suggestions
         try:
             suggestions = await detect_patterns(user, db)

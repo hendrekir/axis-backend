@@ -7,10 +7,48 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
-from models import User, Task
+from models import User, Task, DispatchedSignal
 from routes.auth import get_authenticated_user
 
 router = APIRouter()
+
+
+@router.post("/signal/silence")
+async def get_silence_signals(
+    user: User = Depends(get_authenticated_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return current silence signals for the user.
+
+    iOS displays these as dashed amber cards in Situation.
+    """
+    result = await db.execute(
+        select(DispatchedSignal)
+        .where(
+            DispatchedSignal.user_id == user.id,
+            DispatchedSignal.signal_key.like("silence:%"),
+            DispatchedSignal.completed == False,
+            DispatchedSignal.dismissed == False,
+        )
+        .order_by(DispatchedSignal.dispatched_at.desc())
+    )
+    signals = result.scalars().all()
+
+    return {
+        "silence_signals": [
+            {
+                "id": str(s.id),
+                "signal_key": s.signal_key,
+                "title": s.title,
+                "subtitle": s.subtitle,
+                "urgency": s.urgency,
+                "action_type": s.action_type,
+                "dispatched_at": s.dispatched_at.isoformat() if s.dispatched_at else None,
+                "snoozed_until": s.snoozed_until.isoformat() if s.snoozed_until else None,
+            }
+            for s in signals
+        ],
+    }
 
 
 class TaskCreate(BaseModel):
