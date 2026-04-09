@@ -178,41 +178,38 @@ async def get_meeting_prep(
 
     attendee_emails = {a["email"].lower() for a in attendees if a["email"]}
 
-    # --- 1. Gmail thread messages involving attendees ---
-    email_threads: list[dict] = []
+    # --- 1. Gmail threads per attendee (last 5 matching any attendee) ---
+    threads_by_email: dict[str, list[dict]] = {e: [] for e in attendee_emails}
+    all_email_threads: list[dict] = []
     if user.gmail_connected and attendee_emails:
         from services.gmail_service import fetch_recent_emails
         try:
             emails = await fetch_recent_emails(user, db, max_results=50)
             for e in emails:
                 sender = (e.get("from") or "").lower()
-                if any(addr in sender for addr in attendee_emails):
-                    email_threads.append({
-                        "from": e.get("from", ""),
-                        "subject": e.get("subject", ""),
-                        "snippet": e.get("snippet", "")[:200],
-                        "date": e.get("date", ""),
-                    })
-            email_threads = email_threads[:5]
+                thread = {
+                    "from": e.get("from", ""),
+                    "subject": e.get("subject", ""),
+                    "snippet": e.get("snippet", "")[:200],
+                    "date": e.get("date", ""),
+                }
+                for addr in attendee_emails:
+                    if addr in sender and len(threads_by_email[addr]) < 5:
+                        threads_by_email[addr].append(thread)
+                if len(all_email_threads) < 5 and any(addr in sender for addr in attendee_emails):
+                    all_email_threads.append(thread)
         except Exception as exc:
             logger.warning("Gmail fetch for meeting prep failed: %s", exc)
 
-    # --- 2. Relationship graph data per attendee ---
-    from models import RelationshipGraph, UserModel
-    rel_result = await db.execute(
-        select(RelationshipGraph).where(
-            RelationshipGraph.user_id == user.id,
-            RelationshipGraph.contact_email.in_(list(attendee_emails)),
+    # --- 2. Person profiles per attendee ---
+    from models import PersonProfile
+    pp_result = await db.execute(
+        select(PersonProfile).where(
+            PersonProfile.user_id == user.id,
+            PersonProfile.contact_email.in_(list(attendee_emails)),
         )
     )
-    rel_rows = {r.contact_email.lower(): r for r in rel_result.scalars().all()}
-
-    # Also pull the user_model relationship_graph JSON for richer context
-    um_result = await db.execute(
-        select(UserModel).where(UserModel.user_id == user.id)
-    )
-    user_model = um_result.scalar_one_or_none()
-    um_rel_graph = (user_model.relationship_graph if user_model else {}) or {}
+    profiles_by_email = {p.contact_email.lower(): p for p in pp_result.scalars().all()}
 
     # --- 3. Perplexity web context per attendee (parallel) ---
     from services.perplexity_service import person_lookup
@@ -220,9 +217,12 @@ async def get_meeting_prep(
     async def _web_lookup(attendee: dict) -> dict:
         name = attendee.get("name") or attendee.get("email", "")
         email = attendee.get("email", "")
-        # Extract company from email domain
         company = email.split("@")[1].split(".")[0] if "@" in email else ""
-        query_name = f"{name} {company}".strip() if company and company not in ("gmail", "yahoo", "hotmail", "outlook", "icloud") else name
+        query_name = (
+            f"{name} {company}".strip()
+            if company and company not in ("gmail", "yahoo", "hotmail", "outlook", "icloud")
+            else name
+        )
         if not query_name:
             return {**attendee, "web_context": None}
         try:
@@ -243,33 +243,40 @@ async def get_meeting_prep(
     attendees_enriched = []
     for a in web_results:
         email_lower = a["email"].lower()
-        rel = rel_rows.get(email_lower)
-        um_entry = um_rel_graph.get(email_lower, {})
+        profile = profiles_by_email.get(email_lower)
+        last_threads = threads_by_email.get(email_lower, [])
         attendees_enriched.append({
-            "email": a["email"],
             "name": a.get("name", ""),
+            "email": a["email"],
+            "last_thread": last_threads[0] if last_threads else None,
+            "profile": {
+                "contact_name": profile.contact_name if profile else None,
+                "avg_response_time_hours": profile.avg_response_time_hours if profile else None,
+                "typical_communication_style": profile.typical_communication_style if profile else None,
+                "last_contact_date": profile.last_contact_date.isoformat() if profile and profile.last_contact_date else None,
+                "silence_baseline_days": profile.silence_baseline_days if profile else None,
+                "notes": profile.notes if profile else None,
+            } if profile else None,
             "web_context": a.get("web_context"),
-            "relationship": {
-                "importance": rel.importance_score if rel else um_entry.get("importance"),
-                "total_interactions": rel.total_interactions if rel else um_entry.get("total_interactions"),
-                "last_interaction": rel.last_interaction.isoformat() if rel and rel.last_interaction else um_entry.get("last_interaction"),
-                "avg_reply_time_hrs": rel.avg_reply_time_hrs if rel else um_entry.get("avg_reply_time_hrs"),
-            },
         })
 
     # --- 5. Claude synthesis ---
     from services.claude_service import generate as claude_gen
     import json
+    import re
 
     email_summary = "\n".join(
-        f"- {e['from']}: {e['subject']} — {e['snippet']}" for e in email_threads
+        f"- {e['from']}: {e['subject']} — {e['snippet']}" for e in all_email_threads
     ) or "No recent email history with attendees."
 
     attendee_context = "\n".join(
         f"- {a['name'] or a['email']}: "
         f"Web: {a.get('web_context') or 'Unknown'}. "
-        f"Relationship: {a['relationship']['total_interactions'] or 0} interactions, "
-        f"last contact {a['relationship']['last_interaction'] or 'never'}"
+        f"Profile: {a['profile']['typical_communication_style'] or 'no data'}, "
+        f"last contact {a['profile']['last_contact_date'] or 'never'}"
+        f"{', notes: ' + a['profile']['notes'] if a['profile'] and a['profile']['notes'] else ''}"
+        if a.get("profile") else
+        f"- {a['name'] or a['email']}: Web: {a.get('web_context') or 'Unknown'}. No profile data."
         for a in attendees_enriched
     ) or "No attendees listed."
 
@@ -291,8 +298,6 @@ async def get_meeting_prep(
         max_tokens=768,
     )
 
-    # Parse Claude response
-    import re
     cleaned = re.sub(r'^```(?:json)?\s*\n?', '', brief_raw.strip())
     cleaned = re.sub(r'\n?```\s*$', '', cleaned)
     try:
