@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import User, Task, ThreadMessage, UserModel, Interaction, Skill, AgentActivity, DispatchedSignal
+from models import User, Task, ThreadMessage, UserModel, Interaction, Skill, AgentActivity, DispatchedSignal, PersonProfile
 from prompts.dispatch_v2 import DISPATCH_V2_SYSTEM
 from services.claude_service import generate
 from services.gmail_service import fetch_recent_emails
@@ -207,12 +207,33 @@ async def _build_context(user: User, db: AsyncSession) -> dict:
         except Exception as e:
             logger.warning("Calendar fetch failed for user %s: %s", user.id, e)
 
+    # Person profiles — top 10 contacts by recency
+    result = await db.execute(
+        select(PersonProfile)
+        .where(PersonProfile.user_id == user.id)
+        .order_by(PersonProfile.last_contact_date.desc().nullslast())
+        .limit(10)
+    )
+    profiles = result.scalars().all()
+    if profiles:
+        relationship_context = "\n".join(
+            f"- {p.contact_name or p.contact_email}: "
+            f"style={p.typical_communication_style or 'unknown'}, "
+            f"last contact {p.last_contact_date.strftime('%Y-%m-%d') if p.last_contact_date else 'never'}, "
+            f"silence baseline {p.silence_baseline_days or '?'} days"
+            f"{', ' + p.notes if p.notes else ''}"
+            for p in profiles
+        )
+    else:
+        relationship_context = "No person profiles yet."
+
     return {
         "tasks": tasks_text,
         "recent_context": thread_text,
         "user_model_summary": model_summary,
         "active_skills": skills_text,
         "calendar_context": calendar_text,
+        "relationship_context": relationship_context,
     }
 
 
@@ -479,6 +500,7 @@ async def dispatch_user(user: User, db: AsyncSession) -> dict:
         user_model_summary=ctx["user_model_summary"],
         tasks=ctx["tasks"],
         recent_context=ctx["recent_context"],
+        relationship_context=ctx.get("relationship_context", "No person profiles yet."),
         new_data=new_data + ctx.get("calendar_context", ""),
     )
 

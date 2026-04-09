@@ -18,6 +18,9 @@ User's active tasks:
 Recent thread messages:
 {recent_context}
 
+Key relationships:
+{relationship_context}
+
 New data inputs:
 {new_data}
 

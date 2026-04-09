@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models import User, UserModel, Interaction, SentEmailsCache
+from models import User, UserModel, Interaction, SentEmailsCache, RelationshipGraph, PersonProfile
 from services.claude_service import generate
 
 logger = logging.getLogger("axis.apprentice")
@@ -162,6 +162,105 @@ async def rebuild_voice_model(user: User, db: AsyncSession) -> dict:
         return {"status": "error", "reason": str(e)}
 
 
+PERSON_PROFILE_SYSTEM = """Analyse this contact's email history and interaction data.
+Return JSON only, no markdown fences:
+{
+  "typical_communication_style": "brief and direct" | "detailed and formal" | "casual and friendly" | ...,
+  "silence_baseline_days": <integer — how many days of no contact is normal for this relationship>,
+  "notes": "<one sentence: key pattern or observation about this contact>"
+}
+Only report what the data supports. Return valid JSON only.
+"""
+
+
+async def rebuild_person_profiles(user: User, db: AsyncSession) -> dict:
+    """Rebuild person_profiles from relationship_graph + sent_emails_cache."""
+    # Pull relationship graph rows for this user
+    result = await db.execute(
+        select(RelationshipGraph)
+        .where(RelationshipGraph.user_id == user.id)
+        .order_by(RelationshipGraph.last_interaction.desc().nullslast())
+        .limit(30)
+    )
+    rel_rows = result.scalars().all()
+
+    if not rel_rows:
+        return {"status": "skipped", "reason": "no relationship data"}
+
+    # Pull sent emails for context
+    result = await db.execute(
+        select(SentEmailsCache)
+        .where(SentEmailsCache.user_id == user.id)
+        .order_by(SentEmailsCache.sent_at.desc())
+        .limit(100)
+    )
+    sent_emails = result.scalars().all()
+    emails_by_recipient: dict[str, list] = {}
+    for e in sent_emails:
+        if e.recipient:
+            key = e.recipient.lower()
+            emails_by_recipient.setdefault(key, []).append(e)
+
+    updated = 0
+    for rel in rel_rows:
+        email_lower = rel.contact_email.lower()
+        contact_emails = emails_by_recipient.get(email_lower, [])
+
+        # Build context for Claude
+        email_summary = "\n".join(
+            f"Subject: {e.subject} | Words: {e.word_count} | Formality: {e.formality_score}"
+            for e in contact_emails[:10]
+        ) or "No sent emails to this contact."
+
+        contact_context = (
+            f"Contact: {rel.contact_email}\n"
+            f"Total interactions: {rel.total_interactions}\n"
+            f"Avg reply time: {rel.avg_reply_time_hrs or 'unknown'} hours\n"
+            f"Reply rate: {rel.reply_rate or 'unknown'}\n"
+            f"Last interaction: {rel.last_interaction or 'never'}\n\n"
+            f"Sent emails:\n{email_summary}"
+        )
+
+        try:
+            raw = await generate(
+                system_prompt=PERSON_PROFILE_SYSTEM,
+                user_message=contact_context,
+                max_tokens=256,
+            )
+            cleaned = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+            parsed = json.loads(cleaned)
+        except Exception as e:
+            logger.warning("Person profile generation failed for %s: %s", rel.contact_email, e)
+            parsed = {}
+
+        # Upsert person_profile
+        result = await db.execute(
+            select(PersonProfile).where(
+                PersonProfile.user_id == user.id,
+                PersonProfile.contact_email == rel.contact_email,
+            )
+        )
+        profile = result.scalar_one_or_none()
+        if not profile:
+            profile = PersonProfile(
+                user_id=user.id,
+                contact_email=rel.contact_email,
+            )
+            db.add(profile)
+
+        profile.contact_name = email_lower.split("@")[0].replace(".", " ").title() if not profile.contact_name else profile.contact_name
+        profile.avg_response_time_hours = rel.avg_reply_time_hrs
+        profile.last_contact_date = rel.last_interaction
+        profile.typical_communication_style = parsed.get("typical_communication_style")
+        profile.silence_baseline_days = parsed.get("silence_baseline_days")
+        profile.notes = parsed.get("notes")
+        updated += 1
+
+    await db.commit()
+    logger.info("Person profiles rebuilt for user %s: %d contacts", user.id, updated)
+    return {"status": "updated", "contacts": updated}
+
+
 async def run_all_improvement(db: AsyncSession) -> list[dict]:
     """Run improvement cycle for all Pro users."""
     from services.suggestion_service import detect_patterns
@@ -172,6 +271,13 @@ async def run_all_improvement(db: AsyncSession) -> list[dict]:
     for user in users:
         logger.info("Running improvement cycle for %s", user.name)
         r = await run_improvement_cycle(user, db)
+
+        # Rebuild person profiles from relationship_graph + sent_emails_cache
+        try:
+            pp = await rebuild_person_profiles(user, db)
+            r["person_profiles"] = pp.get("contacts", 0)
+        except Exception as e:
+            logger.warning("Person profile rebuild failed for %s: %s", user.name, e)
 
         # Detect patterns and generate proactive suggestions
         try:

@@ -353,6 +353,22 @@ class Recommendation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class PersonProfile(Base):
+    __tablename__ = "person_profiles"
+    __table_args__ = (UniqueConstraint("user_id", "contact_email"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    contact_email: Mapped[str] = mapped_column(String, nullable=False)
+    contact_name: Mapped[str | None] = mapped_column(String)
+    avg_response_time_hours: Mapped[float | None] = mapped_column(Float)
+    typical_communication_style: Mapped[str | None] = mapped_column(Text)
+    last_contact_date: Mapped[datetime | None] = mapped_column(DateTime)
+    silence_baseline_days: Mapped[int | None] = mapped_column(Integer)
+    notes: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class PushSubscription(Base):
     __tablename__ = "push_subscriptions"
     __table_args__ = (UniqueConstraint("user_id", "endpoint"),)

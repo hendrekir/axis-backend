@@ -237,6 +237,21 @@ async def lifespan(app: FastAPI):
                 extracted_context TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             )""",
+            # Person profiles table (Session 16)
+            """CREATE TABLE IF NOT EXISTS person_profiles (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID REFERENCES users(id),
+                contact_email TEXT NOT NULL,
+                contact_name TEXT,
+                avg_response_time_hours FLOAT,
+                typical_communication_style TEXT,
+                last_contact_date TIMESTAMP,
+                silence_baseline_days INTEGER,
+                notes TEXT,
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(user_id, contact_email)
+            )""",
+            "CREATE INDEX IF NOT EXISTS ix_person_profiles_user ON person_profiles(user_id)",
             # One-time fix: disconnect user fcd83b56 with invalid_grant Gmail token
             """UPDATE api_connections SET is_connected = FALSE
                WHERE user_id::text LIKE 'fcd83b56%'
