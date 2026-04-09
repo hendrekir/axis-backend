@@ -21,7 +21,7 @@ from prompts.meeting_prep import MEETING_PREP_SYSTEM
 from services.calendar_service import fetch_upcoming_events
 from services.claude_service import generate
 from services.model_router import route
-from services.push_service import send_push
+from services import apns_service
 
 logger = logging.getLogger("axis.meeting_prep")
 
@@ -164,14 +164,16 @@ async def run_meeting_prep(db: AsyncSession) -> list[dict]:
                 )
                 db.add(msg)
 
-                # Push notification
+                # APNs push with MEETING_PREP category and deep link
                 if user.apns_token:
-                    await send_push(
-                        user.apns_token,
-                        f"Meeting in {int(minutes_until)}min: {event['summary'][:40]}",
-                        brief[:150],
-                        data={"action_type": "meeting_prep", "event_id": event.get("id", "")},
-                    )
+                    await apns_service.send_meeting_prep(user, {
+                        "id": event.get("id", ""),
+                        "title": event.get("summary", ""),
+                        "summary": event.get("summary", ""),
+                        "brief": brief[:150],
+                        "start_dt": event.get("start_dt", ""),
+                        "deep_link": f"axis://meeting/{event.get('id', '')}",
+                    })
 
                 # Log activity
                 db.add(AgentActivity(

@@ -160,6 +160,7 @@ async def send_now_signal(user, signal: dict) -> bool:
 
 
 async def send_meeting_prep(user, event: dict) -> bool:
+    event_id = str(event.get("id", ""))
     title = f"Meeting soon — {event.get('title', 'Untitled')}"
     body = (event.get("brief") or event.get("summary") or "Tap for brief")[:120]
     return await send_notification(
@@ -169,8 +170,9 @@ async def send_meeting_prep(user, event: dict) -> bool:
         CAT_MEETING_PREP,
         data={
             "type": "meeting_prep",
-            "event_id": str(event.get("id", "")),
+            "event_id": event_id,
             "starts_at": str(event.get("start_dt", "")),
+            "deep_link": event.get("deep_link", f"axis://meeting/{event_id}"),
         },
     )
 

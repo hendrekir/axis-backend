@@ -139,11 +139,14 @@ async def get_meeting_prep(
     user: User = Depends(get_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Generate a meeting prep brief for a specific calendar event."""
+    """Generate a full meeting prep brief for a specific calendar event.
+
+    Pulls Gmail threads, relationship graph data, Perplexity web context,
+    and synthesises via Claude into a structured brief.
+    """
     if not user.calendar_connected:
         raise HTTPException(status_code=400, detail="Calendar not connected")
 
-    # Fetch the specific event from Google Calendar
     creds = await refresh_if_needed(user, db)
     if creds is None:
         raise HTTPException(status_code=400, detail="Calendar credentials invalid")
@@ -154,7 +157,7 @@ async def get_meeting_prep(
     except Exception:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    # Normalise event data
+    # Normalise event
     start = event.get("start", {})
     end = event.get("end", {})
     attendees_raw = event.get("attendees", [])
@@ -162,7 +165,6 @@ async def get_meeting_prep(
         {"email": a.get("email", ""), "name": a.get("displayName", "")}
         for a in attendees_raw[:10]
     ]
-
     event_data = {
         "id": event.get("id", ""),
         "summary": event.get("summary", "(No title)"),
@@ -174,110 +176,144 @@ async def get_meeting_prep(
         "meet_link": event.get("hangoutLink", ""),
     }
 
-    # Fetch recent emails with attendees (if Gmail connected)
-    email_context = []
-    if user.gmail_connected and attendees:
+    attendee_emails = {a["email"].lower() for a in attendees if a["email"]}
+
+    # --- 1. Gmail thread messages involving attendees ---
+    email_threads: list[dict] = []
+    if user.gmail_connected and attendee_emails:
         from services.gmail_service import fetch_recent_emails
         try:
             emails = await fetch_recent_emails(user, db, max_results=50)
-            attendee_emails = {a["email"].lower() for a in attendees if a["email"]}
             for e in emails:
                 sender = (e.get("from") or "").lower()
                 if any(addr in sender for addr in attendee_emails):
-                    email_context.append({
+                    email_threads.append({
                         "from": e.get("from", ""),
                         "subject": e.get("subject", ""),
                         "snippet": e.get("snippet", "")[:200],
                         "date": e.get("date", ""),
                     })
-            email_context = email_context[:5]
+            email_threads = email_threads[:5]
         except Exception as exc:
-            logger.warning("Failed to fetch emails for meeting prep: %s", exc)
+            logger.warning("Gmail fetch for meeting prep failed: %s", exc)
 
-    # Research each attendee via Perplexity (fall back to Claude)
-    attendees_with_context = []
+    # --- 2. Relationship graph data per attendee ---
+    from models import RelationshipGraph, UserModel
+    rel_result = await db.execute(
+        select(RelationshipGraph).where(
+            RelationshipGraph.user_id == user.id,
+            RelationshipGraph.contact_email.in_(list(attendee_emails)),
+        )
+    )
+    rel_rows = {r.contact_email.lower(): r for r in rel_result.scalars().all()}
 
-    async def _lookup_attendee(attendee: dict) -> dict:
+    # Also pull the user_model relationship_graph JSON for richer context
+    um_result = await db.execute(
+        select(UserModel).where(UserModel.user_id == user.id)
+    )
+    user_model = um_result.scalar_one_or_none()
+    um_rel_graph = (user_model.relationship_graph if user_model else {}) or {}
+
+    # --- 3. Perplexity web context per attendee (parallel) ---
+    from services.perplexity_service import person_lookup
+
+    async def _web_lookup(attendee: dict) -> dict:
         name = attendee.get("name") or attendee.get("email", "")
-        if not name:
-            return {**attendee, "context": None}
+        email = attendee.get("email", "")
+        # Extract company from email domain
+        company = email.split("@")[1].split(".")[0] if "@" in email else ""
+        query_name = f"{name} {company}".strip() if company and company not in ("gmail", "yahoo", "hotmail", "outlook", "icloud") else name
+        if not query_name:
+            return {**attendee, "web_context": None}
         try:
-            from services.perplexity_service import person_lookup
             result = await person_lookup(
-                name, context=f"Meeting: {event_data['summary']}"
+                query_name,
+                context=f"Meeting: {event_data['summary']}",
             )
-            return {**attendee, "context": result["text"]}
+            return {**attendee, "web_context": result["text"]}
         except Exception:
-            try:
-                from services.claude_service import generate as claude_gen
-                text = await claude_gen(
-                    system_prompt="Provide brief professional context based on the name and email domain. 2-3 sentences. If unknown, say so.",
-                    user_message=f"Who is {name} ({attendee.get('email', '')})?",
-                    max_tokens=200,
-                )
-                return {**attendee, "context": text}
-            except Exception:
-                return {**attendee, "context": None}
+            return {**attendee, "web_context": None}
 
     if attendees:
-        tasks = [_lookup_attendee(a) for a in attendees[:5]]
-        attendees_with_context = await asyncio.gather(*tasks)
+        web_results = await asyncio.gather(*[_web_lookup(a) for a in attendees[:5]])
     else:
-        attendees_with_context = []
+        web_results = []
 
-    # Generate key points and watch-for via Claude
+    # --- 4. Assemble per-attendee data ---
+    attendees_enriched = []
+    for a in web_results:
+        email_lower = a["email"].lower()
+        rel = rel_rows.get(email_lower)
+        um_entry = um_rel_graph.get(email_lower, {})
+        attendees_enriched.append({
+            "email": a["email"],
+            "name": a.get("name", ""),
+            "web_context": a.get("web_context"),
+            "relationship": {
+                "importance": rel.importance_score if rel else um_entry.get("importance"),
+                "total_interactions": rel.total_interactions if rel else um_entry.get("total_interactions"),
+                "last_interaction": rel.last_interaction.isoformat() if rel and rel.last_interaction else um_entry.get("last_interaction"),
+                "avg_reply_time_hrs": rel.avg_reply_time_hrs if rel else um_entry.get("avg_reply_time_hrs"),
+            },
+        })
+
+    # --- 5. Claude synthesis ---
     from services.claude_service import generate as claude_gen
+    import json
 
     email_summary = "\n".join(
-        f"- {e['from']}: {e['subject']} — {e['snippet']}"
-        for e in email_context
-    ) if email_context else "No recent email history with attendees."
+        f"- {e['from']}: {e['subject']} — {e['snippet']}" for e in email_threads
+    ) or "No recent email history with attendees."
 
-    attendee_summary = "\n".join(
-        f"- {a.get('name') or a['email']}: {a.get('context') or 'No info available'}"
-        for a in attendees_with_context
-    ) if attendees_with_context else "No attendees listed."
+    attendee_context = "\n".join(
+        f"- {a['name'] or a['email']}: "
+        f"Web: {a.get('web_context') or 'Unknown'}. "
+        f"Relationship: {a['relationship']['total_interactions'] or 0} interactions, "
+        f"last contact {a['relationship']['last_interaction'] or 'never'}"
+        for a in attendees_enriched
+    ) or "No attendees listed."
 
-    analysis = await claude_gen(
+    brief_raw = await claude_gen(
         system_prompt=(
-            "You are Axis, preparing a meeting brief. Return valid JSON only, no markdown fences. "
-            'Format: {"key_points": ["point 1", "point 2", ...], "watch_for": ["item 1", "item 2", ...]}'
+            "You are Axis, preparing a meeting brief. Return valid JSON only, no markdown fences.\n"
+            'Format: {"who_they_are": "...", "last_discussed": "...", '
+            '"what_they_care_about": "...", "watch_for": ["item 1", "item 2", ...]}'
         ),
         user_message=(
             f"Meeting: {event_data['summary']}\n"
             f"Time: {event_data['start_dt']}\n"
             f"Location: {event_data['location'] or 'Not specified'}\n"
             f"Description: {event_data['description'] or 'None'}\n\n"
-            f"Attendees:\n{attendee_summary}\n\n"
-            f"Recent emails with attendees:\n{email_summary}\n\n"
-            "Generate 3-5 key points to prepare for this meeting and 2-3 things to watch for."
+            f"Attendees with context:\n{attendee_context}\n\n"
+            f"Recent email threads with attendees:\n{email_summary}\n\n"
+            "Synthesise: who they are, what you last discussed, what they care about, watch-fors."
         ),
-        max_tokens=512,
+        max_tokens=768,
     )
 
-    # Parse Claude's JSON response
-    import json
+    # Parse Claude response
+    import re
+    cleaned = re.sub(r'^```(?:json)?\s*\n?', '', brief_raw.strip())
+    cleaned = re.sub(r'\n?```\s*$', '', cleaned)
     try:
-        parsed = json.loads(analysis)
-        key_points = parsed.get("key_points", [])
-        watch_for = parsed.get("watch_for", [])
+        brief_parsed = json.loads(cleaned)
     except (json.JSONDecodeError, TypeError):
-        key_points = [analysis]
-        watch_for = []
+        brief_parsed = {
+            "who_they_are": cleaned,
+            "last_discussed": "",
+            "what_they_care_about": "",
+            "watch_for": [],
+        }
 
     return {
         "event": event_data,
-        "attendees_with_context": [
-            {
-                "email": a.get("email", ""),
-                "name": a.get("name", ""),
-                "context": a.get("context"),
-            }
-            for a in attendees_with_context
+        "attendees": attendees_enriched,
+        "brief_text": brief_parsed,
+        "web_context": [
+            {"name": a["name"] or a["email"], "context": a.get("web_context")}
+            for a in attendees_enriched
+            if a.get("web_context")
         ],
-        "email_context": email_context,
-        "key_points": key_points,
-        "watch_for": watch_for,
     }
 
 
