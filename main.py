@@ -205,6 +205,17 @@ async def lifespan(app: FastAPI):
                 UNIQUE(user_id, signal_key)
             )""",
             "CREATE INDEX IF NOT EXISTS ix_dispatched_signals_user_at ON dispatched_signals(user_id, dispatched_at)",
+            # Lock-screen widget enrichment columns (Session 15)
+            "ALTER TABLE dispatched_signals ADD COLUMN IF NOT EXISTS title TEXT",
+            "ALTER TABLE dispatched_signals ADD COLUMN IF NOT EXISTS subtitle TEXT",
+            "ALTER TABLE dispatched_signals ADD COLUMN IF NOT EXISTS action_type TEXT",
+            "ALTER TABLE dispatched_signals ADD COLUMN IF NOT EXISTS event_id TEXT",
+            "ALTER TABLE dispatched_signals ADD COLUMN IF NOT EXISTS destination TEXT",
+            "ALTER TABLE dispatched_signals ADD COLUMN IF NOT EXISTS completed BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE dispatched_signals ADD COLUMN IF NOT EXISTS dismissed BOOLEAN DEFAULT FALSE",
+            "ALTER TABLE dispatched_signals ADD COLUMN IF NOT EXISTS snoozed_until TIMESTAMP",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS wake_time TEXT DEFAULT '07:00'",
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_brief_read_date DATE",
             # Recommendations table (Session 14)
             """CREATE TABLE IF NOT EXISTS recommendations (
                 id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

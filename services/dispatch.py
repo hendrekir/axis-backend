@@ -109,16 +109,34 @@ async def _record_signal(user_id, item: dict, surface: str, db: AsyncSession):
         )
     )
     existing = result.scalar_one_or_none()
+    title = item.get("title") or item.get("summary") or ""
+    subtitle = item.get("pre_prepared_action") or item.get("summary") or ""
+    action_type = item.get("action_type")
+    event_id = item.get("event_id") or (item.get("item_id", "").replace("travel_", "") if str(item.get("item_id", "")).startswith("travel_") else None)
+    destination = item.get("destination") or (item.get("summary") if item.get("source") == "travel_time" else None)
     if existing:
         existing.urgency = urgency
         existing.surface = surface
         existing.dispatched_at = datetime.utcnow()
+        existing.title = title
+        existing.subtitle = subtitle
+        existing.action_type = action_type
+        existing.event_id = event_id
+        existing.destination = destination
+        existing.completed = False
+        existing.dismissed = False
+        existing.snoozed_until = None
     else:
         db.add(DispatchedSignal(
             user_id=user_id,
             signal_key=key,
             surface=surface,
             urgency=urgency,
+            title=title,
+            subtitle=subtitle,
+            action_type=action_type,
+            event_id=event_id,
+            destination=destination,
         ))
 
 

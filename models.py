@@ -32,6 +32,8 @@ class User(Base):
     current_streak: Mapped[int] = mapped_column(Integer, default=0)
     longest_streak: Mapped[int] = mapped_column(Integer, default=0)
     last_active_date: Mapped[datetime | None] = mapped_column(Date)
+    wake_time: Mapped[str] = mapped_column(String, default="07:00")
+    last_brief_read_date: Mapped[datetime | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -330,6 +332,14 @@ class DispatchedSignal(Base):
     surface: Mapped[str] = mapped_column(String, nullable=False)
     urgency: Mapped[int] = mapped_column(Integer, default=5)
     dispatched_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    title: Mapped[str | None] = mapped_column(Text)
+    subtitle: Mapped[str | None] = mapped_column(Text)
+    action_type: Mapped[str | None] = mapped_column(String)
+    event_id: Mapped[str | None] = mapped_column(String)
+    destination: Mapped[str | None] = mapped_column(Text)
+    completed: Mapped[bool] = mapped_column(Boolean, default=False)
+    dismissed: Mapped[bool] = mapped_column(Boolean, default=False)
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class Recommendation(Base):

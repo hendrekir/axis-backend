@@ -1,18 +1,27 @@
 import json
 import logging
 import re
-from datetime import date
+from datetime import date, datetime, timedelta
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("axis.me")
 
 from database import get_db
-from models import ApiConnection, JournalEntry, Recommendation, Task, ThreadMessage, User
+from models import (
+    ApiConnection,
+    DispatchedSignal,
+    JournalEntry,
+    Recommendation,
+    Task,
+    ThreadMessage,
+    User,
+)
 from routes.auth import get_authenticated_user
 from services.streak_service import touch_streak
 
@@ -144,50 +153,212 @@ async def store_device_token(
     return {"status": "registered", "device_token": body.device_token}
 
 
+def _idle_response() -> dict:
+    return {
+        "state": "idle",
+        "title": "Axis is watching",
+        "subtitle": "Tap to capture",
+        "icon": "eye.fill",
+        "urgency": 0,
+        "primary_action": "capture",
+        "secondary_action": None,
+        "signal_id": None,
+        "event_id": None,
+        "destination": None,
+    }
+
+
+def _row_to_response(row: DispatchedSignal, *, state: str, icon: str,
+                     primary_action: str, secondary_action: str,
+                     title: str | None = None, subtitle: str | None = None) -> dict:
+    return {
+        "state": state,
+        "title": title if title is not None else (row.title or ""),
+        "subtitle": subtitle if subtitle is not None else (row.subtitle or ""),
+        "icon": icon,
+        "urgency": row.urgency or 0,
+        "primary_action": primary_action,
+        "secondary_action": secondary_action,
+        "signal_id": str(row.id),
+        "event_id": row.event_id,
+        "destination": row.destination,
+    }
+
+
 @router.get("/me/widget-data")
 async def get_widget_data(
     user: User = Depends(get_authenticated_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Lightweight endpoint for WidgetKit — signal, MIT count, next event."""
-    # Top signal: latest assistant intel message (not archived)
-    signal_result = await db.execute(
-        select(ThreadMessage.content)
+    """7-state lock-screen widget priority resolver. DB-only. <200ms."""
+    now = datetime.utcnow()
+    fresh_cutoff = now - timedelta(hours=48)
+
+    not_handled = and_(
+        DispatchedSignal.completed == False,
+        DispatchedSignal.dismissed == False,
+        or_(DispatchedSignal.snoozed_until.is_(None), DispatchedSignal.snoozed_until <= now),
+    )
+
+    # 1. departure_alert — most recent travel_time signal in the last 30 min
+    depart_cutoff = now - timedelta(minutes=30)
+    res = await db.execute(
+        select(DispatchedSignal)
         .where(
-            ThreadMessage.user_id == user.id,
-            ThreadMessage.role == "assistant",
-            ThreadMessage.message_type == "intel",
-            ThreadMessage.archived == False,
+            DispatchedSignal.user_id == user.id,
+            DispatchedSignal.action_type == "open_maps",
+            DispatchedSignal.dispatched_at >= depart_cutoff,
+            not_handled,
         )
-        .order_by(ThreadMessage.created_at.desc())
+        .order_by(DispatchedSignal.dispatched_at.desc())
         .limit(1)
     )
-    signal = signal_result.scalar_one_or_none()
+    row = res.scalar_one_or_none()
+    if row:
+        return _row_to_response(
+            row,
+            state="departure_alert",
+            icon="car.fill",
+            primary_action="open_maps",
+            secondary_action="got_it",
+        )
 
-    # MIT count: incomplete urgent tasks
-    mit_result = await db.execute(
-        select(func.count())
-        .select_from(Task)
-        .where(Task.user_id == user.id, Task.is_done == False, Task.is_urgent == True)
+    # 2. now_signal — urgency >= 8, not dispatched in last 15 min (i.e. settled)
+    fifteen_ago = now - timedelta(minutes=15)
+    res = await db.execute(
+        select(DispatchedSignal)
+        .where(
+            DispatchedSignal.user_id == user.id,
+            DispatchedSignal.urgency >= 8,
+            DispatchedSignal.dispatched_at >= fresh_cutoff,
+            DispatchedSignal.dispatched_at <= fifteen_ago,
+            or_(DispatchedSignal.action_type.is_(None), DispatchedSignal.action_type != "open_maps"),
+            or_(DispatchedSignal.action_type.is_(None), DispatchedSignal.action_type != "silence"),
+            not_handled,
+        )
+        .order_by(DispatchedSignal.urgency.desc(), DispatchedSignal.dispatched_at.desc())
+        .limit(1)
     )
-    mit_count = mit_result.scalar() or 0
+    row = res.scalar_one_or_none()
+    if row:
+        return _row_to_response(
+            row,
+            state="now_signal",
+            icon="exclamationmark.circle.fill",
+            primary_action="handle",
+            secondary_action="snooze_2h",
+        )
 
-    # Next event (lightweight — only if calendar connected)
-    next_event = None
-    if user.calendar_connected:
-        from services.calendar_service import get_next_event
-        try:
-            evt = await get_next_event(user, db)
-            if evt:
-                next_event = {"title": evt["summary"], "time": evt["start_dt"]}
-        except Exception:
-            pass  # Don't fail widget data over calendar errors
+    # 3. meeting_prep — calendar event 25-35 min out with attendees
+    res = await db.execute(
+        select(DispatchedSignal)
+        .where(
+            DispatchedSignal.user_id == user.id,
+            DispatchedSignal.action_type == "meeting_prep",
+            DispatchedSignal.dispatched_at >= fresh_cutoff,
+            not_handled,
+        )
+        .order_by(DispatchedSignal.dispatched_at.desc())
+        .limit(1)
+    )
+    row = res.scalar_one_or_none()
+    if row:
+        return _row_to_response(
+            row,
+            state="meeting_prep",
+            icon="calendar",
+            primary_action="read_brief",
+            secondary_action="dismiss",
+        )
 
-    return {
-        "signal": signal[:200] if signal else None,
-        "mit_count": mit_count,
-        "next_event": next_event,
-    }
+    # 4. silence_detected
+    res = await db.execute(
+        select(DispatchedSignal)
+        .where(
+            DispatchedSignal.user_id == user.id,
+            DispatchedSignal.action_type == "silence",
+            DispatchedSignal.dismissed == False,
+        )
+        .order_by(DispatchedSignal.dispatched_at.desc())
+        .limit(1)
+    )
+    row = res.scalar_one_or_none()
+    if row:
+        return _row_to_response(
+            row,
+            state="silence_detected",
+            icon="waveform",
+            primary_action="follow_up",
+            secondary_action="remind_3d",
+        )
+
+    # 5. today_signal — urgency 5-7
+    res = await db.execute(
+        select(DispatchedSignal)
+        .where(
+            DispatchedSignal.user_id == user.id,
+            DispatchedSignal.urgency >= 5,
+            DispatchedSignal.urgency <= 7,
+            DispatchedSignal.dispatched_at >= fresh_cutoff,
+            not_handled,
+        )
+        .order_by(DispatchedSignal.urgency.desc(), DispatchedSignal.dispatched_at.desc())
+        .limit(1)
+    )
+    row = res.scalar_one_or_none()
+    if row:
+        return _row_to_response(
+            row,
+            state="today_signal",
+            icon="bell.fill",
+            primary_action="reply",
+            secondary_action="later",
+        )
+
+    # 6. morning_brief — within 2 hours of wake_time, not yet read today
+    try:
+        tz = ZoneInfo(user.timezone or "Australia/Brisbane")
+    except Exception:
+        tz = ZoneInfo("UTC")
+    local_now = datetime.now(tz)
+    wake_str = (user.wake_time or "07:00").strip()
+    try:
+        wh, wm = (int(x) for x in wake_str.split(":")[:2])
+    except Exception:
+        wh, wm = 7, 0
+    wake_dt = local_now.replace(hour=wh, minute=wm, second=0, microsecond=0)
+    brief_window_end = wake_dt + timedelta(hours=2)
+    brief_already_read = (
+        user.last_brief_read_date is not None
+        and user.last_brief_read_date == local_now.date()
+    )
+    if wake_dt <= local_now <= brief_window_end and not brief_already_read:
+        # Count signals caught in the last ~12 hours for the brief headline
+        twelve_ago = now - timedelta(hours=12)
+        count_res = await db.execute(
+            select(func.count())
+            .select_from(DispatchedSignal)
+            .where(
+                DispatchedSignal.user_id == user.id,
+                DispatchedSignal.dispatched_at >= twelve_ago,
+            )
+        )
+        caught = count_res.scalar() or 0
+        return {
+            "state": "morning_brief",
+            "title": "Your Axis brief",
+            "subtitle": f"{caught} things caught · 2 min",
+            "icon": "sun.max.fill",
+            "urgency": 5,
+            "primary_action": "play",
+            "secondary_action": "open",
+            "signal_id": None,
+            "event_id": None,
+            "destination": None,
+        }
+
+    # 7. idle
+    return _idle_response()
 
 
 RECOMMENDATION_SYSTEM = """You are a personal researcher. Based on this person's context — their notes, recent journal entries, and what they're thinking about — recommend ONE thing to read, watch, or listen to today.
