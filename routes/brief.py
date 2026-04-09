@@ -38,12 +38,12 @@ async def get_brief_today(
         hour=0, minute=0, second=0, microsecond=0,
     )
 
-    # Digest messages are stored with source_skill="digest"
+    # Digest messages are stored with message_type="morning_brief"
     result = await db.execute(
         select(ThreadMessage)
         .where(
             ThreadMessage.user_id == user.id,
-            ThreadMessage.source_skill == "digest",
+            ThreadMessage.message_type == "morning_brief",
             ThreadMessage.created_at >= today_start,
         )
         .order_by(ThreadMessage.created_at.asc())
@@ -56,7 +56,7 @@ async def get_brief_today(
             select(ThreadMessage)
             .where(
                 ThreadMessage.user_id == user.id,
-                ThreadMessage.source_skill == "digest",
+                ThreadMessage.message_type == "morning_brief",
                 ThreadMessage.created_at >= today_start,
             )
             .order_by(ThreadMessage.created_at.asc())

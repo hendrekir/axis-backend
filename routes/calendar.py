@@ -119,7 +119,17 @@ async def get_upcoming(
     if not user.calendar_connected:
         raise HTTPException(status_code=400, detail="Calendar not connected")
 
-    events = await fetch_upcoming_events(user, db, hours_ahead=hours)
+    try:
+        events = await fetch_upcoming_events(user, db, hours_ahead=hours)
+    except Exception as e:
+        error_msg = str(e).lower()
+        if "invalid_grant" in error_msg or "token" in error_msg and ("expired" in error_msg or "revoked" in error_msg):
+            user.calendar_connected = False
+            await db.commit()
+            logger.warning("Calendar token revoked for user %s — disconnected", user.id)
+            raise HTTPException(status_code=401, detail="Calendar token expired — please reconnect")
+        logger.error("Calendar fetch failed for user %s: %s", user.id, e)
+        raise HTTPException(status_code=502, detail="Failed to fetch calendar events")
     return {"events": events}
 
 

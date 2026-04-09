@@ -177,7 +177,7 @@ async def generate_digest(user: User, db: AsyncSession) -> str:
             user_id=user.id,
             role="assistant",
             content=text,
-            message_type="intel",
+            message_type="morning_brief",
             source_skill="digest",
         )
         db.add(msg)
