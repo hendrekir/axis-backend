@@ -720,7 +720,7 @@ Legend: ✅ Done · ⬜ Not started · 🔄 In progress · 🚫 Blocked (needs p
 - ⬜ Beta tester onboarding email via Resend
 - ⬜ NPS survey link sent to TestFlight users at Day 7 — must be 40+ before public launch
 - ⬜ App Store screenshots — all required sizes (6.7", 6.1", iPad if applicable)
-- ⬜ App Store description — lead with "Be phone lazy. Be world productive."
+- ⬜ App Store description — lead with "Everything you're trying to hold in your head. Held."
 - ⬜ Keywords optimisation — ambient AI, AI assistant, smart notifications, productivity
 - ⬜ App Store submission — Privacy policy URL required, support URL required
 - ⬜ App Review — ensure HealthKit usage description in Info.plist
@@ -735,7 +735,7 @@ Legend: ✅ Done · ⬜ Not started · 🔄 In progress · 🚫 Blocked (needs p
 ### 5.1 Landing Page
 - ⬜ Domain — axis.app (or backup: useaxis.app)
 - ⬜ Single page — hero, 3 features, 1 testimonial, app store badge
-- ⬜ Hero line: "Be phone lazy. Be world productive."
+- ⬜ Hero line: "Everything you're trying to hold in your head. Held."
 - ⬜ Subheader: "The AI that reads your inbox, knows your day, and handles what it can — before you wake up."
 - ⬜ 45-second screen recording demo embedded — shows brain dump → tasks, morning brief, email draft
 - ⬜ Email capture for iOS waitlist
