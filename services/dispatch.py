@@ -581,8 +581,44 @@ async def run_dispatch(db: AsyncSession) -> list[dict]:
     all_stats = []
     for user in users:
         logger.info("Dispatching for %s (%s)", user.name, user.id)
-        stats = await dispatch_user(user, db)
-        all_stats.append(stats)
+        try:
+            stats = await dispatch_user(user, db)
+            all_stats.append(stats)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if "invalid_grant" in error_msg or "token has been expired or revoked" in error_msg:
+                logger.warning(
+                    "invalid_grant for user %s (%s) — disconnecting Gmail",
+                    user.name, user.id,
+                )
+                user.gmail_connected = False
+                # Also mark api_connections row
+                from models import ApiConnection
+                conn_result = await db.execute(
+                    select(ApiConnection).where(
+                        ApiConnection.user_id == user.id,
+                        ApiConnection.service == "gmail",
+                    )
+                )
+                api_conn = conn_result.scalar_one_or_none()
+                if api_conn:
+                    api_conn.is_connected = False
+                await db.commit()
+                all_stats.append({
+                    "user_id": str(user.id),
+                    "status": "error",
+                    "error": "invalid_grant — Gmail disconnected",
+                })
+            else:
+                logger.error(
+                    "Dispatch failed for user %s (%s): %s",
+                    user.name, user.id, e,
+                )
+                all_stats.append({
+                    "user_id": str(user.id),
+                    "status": "error",
+                    "error": str(e)[:200],
+                })
 
     # Piggyback time-based notifications onto the 15-min dispatch cycle.
     # Each function checks per-user local time internally.

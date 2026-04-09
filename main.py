@@ -237,6 +237,12 @@ async def lifespan(app: FastAPI):
                 extracted_context TEXT,
                 created_at TIMESTAMP DEFAULT NOW()
             )""",
+            # One-time fix: disconnect user fcd83b56 with invalid_grant Gmail token
+            """UPDATE api_connections SET is_connected = FALSE
+               WHERE user_id::text LIKE 'fcd83b56%'
+                 AND service = 'gmail'""",
+            """UPDATE users SET gmail_connected = FALSE
+               WHERE id::text LIKE 'fcd83b56%'""",
         ]
         for sql in migrations:
             await conn.execute(text(sql))
