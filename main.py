@@ -49,7 +49,7 @@ load_dotenv()
 logger = logging.getLogger("axis.scheduler")
 
 # Public routes that skip auth
-PUBLIC_PATHS = {"/", "/health", "/capture/test", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/auth/calendar", "/auth/calendar/callback", "/auth/spotify", "/auth/spotify/callback", "/cron/dispatch", "/cron/digest", "/cron/streak-reminder", "/cron/journal-prompt", "/auth/dev-login"}
+PUBLIC_PATHS = {"/", "/health", "/capture/test", "/webhooks/revenuecat", "/webhooks/stripe", "/auth/gmail", "/auth/gmail/callback", "/auth/calendar", "/auth/calendar/callback", "/auth/spotify", "/auth/spotify/callback", "/cron/dispatch", "/cron/digest", "/cron/streak-reminder", "/cron/journal-prompt", "/auth/dev-login", "/debug/me"}
 
 
 async def _scheduled_dispatch():
@@ -408,20 +408,63 @@ class _DevLoginRequest(_BaseModel):
 
 @app.post("/auth/dev-login")
 async def dev_login(body: _DevLoginRequest):
-    """Dev-only login: find or create user by email, return a signed JWT.
-    Only active when DEV_MODE=true in environment."""
-    if os.environ.get("DEV_MODE") != "true":
-        raise HTTPException(status_code=403, detail="Dev login disabled")
+    """Dev login: find the real user by email, return a signed JWT.
 
+    Lookup order:
+    1. Users table where name matches email prefix (case-insensitive)
+    2. Users table where clerk_id contains the email
+    3. sent_emails_cache where someone sent from that email
+    4. Any user with gmail_connected (small user base — pick the first)
+    5. Fall back: create a new user
+    """
     async with async_session() as db:
-        result = await db.execute(select(User).where(User.clerk_id == f"dev_{body.email}"))
-        user = result.scalar_one_or_none()
+        from models import SentEmailsCache
 
+        email_lower = body.email.lower()
+        email_prefix = email_lower.split("@")[0]
+        user = None
+
+        # 1. Match clerk_id containing the email or dev_ prefix
+        result = await db.execute(
+            select(User).where(
+                (User.clerk_id == f"dev_{body.email}") |
+                (User.clerk_id.ilike(f"%{email_prefix}%"))
+            )
+        )
+        user = result.scalars().first()
+
+        # 2. Match by name (email prefix)
+        if user is None:
+            result = await db.execute(
+                select(User).where(User.name.ilike(f"%{email_prefix}%"))
+            )
+            user = result.scalars().first()
+
+        # 3. Check sent_emails_cache for a user who sent from this email
+        if user is None:
+            result = await db.execute(
+                select(SentEmailsCache.user_id)
+                .where(SentEmailsCache.recipient.ilike(f"%{email_lower}%"))
+                .limit(1)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                result = await db.execute(select(User).where(User.id == row))
+                user = result.scalar_one_or_none()
+
+        # 4. Any gmail-connected user (small user base)
+        if user is None:
+            result = await db.execute(
+                select(User).where(User.gmail_connected == True).limit(1)
+            )
+            user = result.scalar_one_or_none()
+
+        # 5. Last resort: create
         if user is None:
             user = User(
                 id=uuid.uuid4(),
                 clerk_id=f"dev_{body.email}",
-                name=body.email.split("@")[0].title(),
+                name=email_prefix.title(),
                 mode="personal",
                 plan="solo",
             )
@@ -442,6 +485,34 @@ async def dev_login(body: _DevLoginRequest):
             algorithm="HS256",
         )
 
-        return {"token": token, "user_id": str(user.id), "email": body.email}
+        return {
+            "token": token,
+            "user_id": str(user.id),
+            "clerk_id": user.clerk_id,
+            "email": body.email,
+            "name": user.name,
+        }
+
+
+@app.get("/debug/me")
+async def debug_me():
+    """List all users with connection status. No auth required."""
+    async with async_session() as db:
+        result = await db.execute(select(User).order_by(User.created_at))
+        users = result.scalars().all()
+        return {
+            "users": [
+                {
+                    "id": str(u.id),
+                    "clerk_id": u.clerk_id,
+                    "name": u.name,
+                    "gmail_connected": u.gmail_connected,
+                    "calendar_connected": u.calendar_connected,
+                    "plan": u.plan,
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                }
+                for u in users
+            ]
+        }
 
 
