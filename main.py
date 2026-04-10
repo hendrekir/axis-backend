@@ -347,10 +347,16 @@ async def auth_middleware(request: Request, call_next):
     token = auth_header.split(" ", 1)[1]
 
     # Try dev token first (self-signed HS256)
-    dev_user = _verify_dev_token(token)
-    if dev_user is not None:
-        request.state.user = dev_user
-        return await call_next(request)
+    dev_claims = _verify_dev_token(token)
+    if dev_claims is not None:
+        async with async_session() as db:
+            result = await db.execute(
+                select(User).where(User.clerk_id == dev_claims.clerk_id)
+            )
+            real_user = result.scalar_one_or_none()
+        if real_user:
+            request.state.user = real_user
+            return await call_next(request)
 
     # Then try Clerk token
     user = await get_current_user(token)
