@@ -408,58 +408,24 @@ class _DevLoginRequest(_BaseModel):
 
 @app.post("/auth/dev-login")
 async def dev_login(body: _DevLoginRequest):
-    """Dev login: find the real user by email, return a signed JWT.
+    """Dev login: find the real user account, return a signed JWT.
 
-    Lookup order:
-    1. Users table where name matches email prefix (case-insensitive)
-    2. Users table where clerk_id contains the email
-    3. sent_emails_cache where someone sent from that email
-    4. Any user with gmail_connected (small user base — pick the first)
-    5. Fall back: create a new user
+    Picks the most recently created user with gmail_connected=True.
+    Falls back to creating a new user only if no connected user exists.
     """
     async with async_session() as db:
-        from models import SentEmailsCache
+        email_prefix = body.email.lower().split("@")[0]
 
-        email_lower = body.email.lower()
-        email_prefix = email_lower.split("@")[0]
-        user = None
-
-        # 1. Match clerk_id containing the email or dev_ prefix
+        # Primary: gmail-connected user, most recent first
         result = await db.execute(
-            select(User).where(
-                (User.clerk_id == f"dev_{body.email}") |
-                (User.clerk_id.ilike(f"%{email_prefix}%"))
-            )
+            select(User)
+            .where(User.gmail_connected == True)
+            .order_by(User.created_at.desc())
+            .limit(1)
         )
-        user = result.scalars().first()
+        user = result.scalar_one_or_none()
 
-        # 2. Match by name (email prefix)
-        if user is None:
-            result = await db.execute(
-                select(User).where(User.name.ilike(f"%{email_prefix}%"))
-            )
-            user = result.scalars().first()
-
-        # 3. Check sent_emails_cache for a user who sent from this email
-        if user is None:
-            result = await db.execute(
-                select(SentEmailsCache.user_id)
-                .where(SentEmailsCache.recipient.ilike(f"%{email_lower}%"))
-                .limit(1)
-            )
-            row = result.scalar_one_or_none()
-            if row:
-                result = await db.execute(select(User).where(User.id == row))
-                user = result.scalar_one_or_none()
-
-        # 4. Any gmail-connected user (small user base)
-        if user is None:
-            result = await db.execute(
-                select(User).where(User.gmail_connected == True).limit(1)
-            )
-            user = result.scalar_one_or_none()
-
-        # 5. Last resort: create
+        # Fallback: create
         if user is None:
             user = User(
                 id=uuid.uuid4(),
