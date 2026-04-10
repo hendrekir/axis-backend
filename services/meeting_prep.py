@@ -193,7 +193,15 @@ async def run_meeting_prep(db: AsyncSession) -> list[dict]:
             await db.commit()
 
         except Exception as e:
-            logger.error("Meeting prep failed for user %s: %s", user.id, e)
+            error_msg = str(e).lower()
+            if "invalid_grant" in error_msg or "token has been expired or revoked" in error_msg:
+                logger.warning(
+                    "Meeting prep: invalid_grant for user %s — disconnecting calendar", user.id
+                )
+                user.calendar_connected = False
+                await db.commit()
+            else:
+                logger.error("Meeting prep failed for user %s: %s", user.id, e)
 
     logger.info("Meeting prep complete: %d briefs generated", len(results))
     return results

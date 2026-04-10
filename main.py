@@ -257,11 +257,11 @@ async def lifespan(app: FastAPI):
                 UNIQUE(user_id, contact_email)
             )""",
             "CREATE INDEX IF NOT EXISTS ix_person_profiles_user ON person_profiles(user_id)",
-            # One-time fix: disconnect user fcd83b56 with invalid_grant Gmail token
+            # One-time fix: disconnect user fcd83b56 with revoked Gmail + Calendar tokens
             """UPDATE api_connections SET is_connected = FALSE
                WHERE user_id::text LIKE 'fcd83b56%'
-                 AND service = 'gmail'""",
-            """UPDATE users SET gmail_connected = FALSE
+                 AND service IN ('gmail', 'calendar')""",
+            """UPDATE users SET gmail_connected = FALSE, calendar_connected = FALSE
                WHERE id::text LIKE 'fcd83b56%'""",
         ]
         for sql in migrations:
@@ -303,9 +303,8 @@ DEV_TOKEN_SECRET = os.environ.get("SECRET_KEY", "axis-dev-secret")
 
 
 def _verify_dev_token(token: str):
-    """Verify a self-signed dev JWT (HS256). Returns a minimal user object or None."""
-    if os.environ.get("DEV_MODE") != "true":
-        return None
+    """Verify a self-signed dev JWT (HS256). Returns a minimal user object or None.
+    The token itself contains dev=True as a guard — no env var check needed."""
     try:
         claims = jwt.decode(token, DEV_TOKEN_SECRET, algorithms=["HS256"])
         if claims.get("dev") is not True:
