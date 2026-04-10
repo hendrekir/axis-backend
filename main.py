@@ -416,14 +416,23 @@ async def dev_login(body: _DevLoginRequest):
     async with async_session() as db:
         email_prefix = body.email.lower().split("@")[0]
 
-        # Primary: gmail-connected user, most recent first
+        # Primary: real user by clerk_id
         result = await db.execute(
-            select(User)
-            .where(User.gmail_connected == True)
-            .order_by(User.created_at.desc())
-            .limit(1)
+            select(User).where(
+                User.clerk_id == "user_3Bv6mquvdiDyUGlt19mJW00ixPl"
+            )
         )
         user = result.scalar_one_or_none()
+
+        # Fallback: any gmail-connected user
+        if user is None:
+            result = await db.execute(
+                select(User)
+                .where(User.gmail_connected == True)
+                .order_by(User.created_at.desc())
+                .limit(1)
+            )
+            user = result.scalar_one_or_none()
 
         # Fallback: create
         if user is None:
